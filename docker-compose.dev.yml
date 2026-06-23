@@ -1,0 +1,21 @@
+services:
+  api:
+    volumes:
+      - .:/app
+    environment:
+      LOG_LEVEL: DEBUG
+
+  worker:
+    volumes:
+      - .:/app
+    environment:
+      LOG_LEVEL: DEBUG
+
+  scheduler:
+    volumes:
+      - .:/app
+    environment:
+      LOG_LEVEL: DEBUG
+
+include:
+  - docker-compose.yml

@@ -1,0 +1,7 @@
+criteria:
+  unsupported_claims:
+    max_allowed: 0
+  evidence_coverage:
+    minimum: 0.75
+  confidence_calibration:
+    maximum_without_direct_evidence: 0.65

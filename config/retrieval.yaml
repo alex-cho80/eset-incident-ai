@@ -1,0 +1,12 @@
+retrieval:
+  top_k: 10
+  vector_weight: 0.55
+  keyword_weight: 0.25
+  recency_weight: 0.10
+  severity_weight: 0.10
+  filters:
+    require_tenant_scope: true
+    require_access_scope: true
+  chunk:
+    max_chars: 1200
+    overlap_chars: 150

@@ -1,0 +1,4 @@
+* @security-team @platform-team
+/docs/adr/ @architecture-team
+/deploy/ @platform-team
+/src/eset_incident_ai/security/ @security-team

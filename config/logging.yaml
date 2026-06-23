@@ -1,0 +1,10 @@
+logging:
+  level: INFO
+  renderer: json
+  redact_keys:
+    - authorization
+    - access_token
+    - refresh_token
+    - password
+    - client_secret
+    - webhook_url

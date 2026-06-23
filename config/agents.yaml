@@ -1,0 +1,15 @@
+agents:
+  max_loop_count: 2
+  nodes:
+    - intake
+    - retrieve
+    - investigate
+    - root_cause
+    - remediation
+    - critique
+    - security_review
+    - approval
+    - notify
+  confidence:
+    reject_below: 0.65
+    auto_notify_minimum: 0.80

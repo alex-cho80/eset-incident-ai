@@ -1,0 +1,5 @@
+{
+  "project": "eset-incident-ai",
+  "required_reading": ["CLAUDE.md", "AGENTS.md", "harness.yaml"],
+  "review_focus": ["architecture", "security", "data-boundaries", "operational-readiness"]
+}

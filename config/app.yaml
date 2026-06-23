@@ -1,0 +1,16 @@
+app:
+  name: eset-incident-ai
+  environment: development
+  api_prefix: /api/v1
+
+eset:
+  poll_interval_seconds: 300
+  page_size: 100
+  timeout_seconds: 30
+  retry_attempts: 5
+
+analysis:
+  max_agent_loops: 2
+  max_retrieval_queries: 5
+  max_evidence: 10
+  max_llm_calls_per_incident: 8

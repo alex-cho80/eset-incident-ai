@@ -1,0 +1,16 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  production-gate:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Await environment approval
+        run: echo "Production deployment requires protected environment approval."

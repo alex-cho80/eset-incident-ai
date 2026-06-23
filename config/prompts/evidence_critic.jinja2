@@ -1,0 +1,12 @@
+Review the proposed analysis against the supplied evidence.
+
+Reject a claim when:
+- no evidence ID supports it;
+- cited evidence does not contain the asserted fact;
+- correlation is presented as causation;
+- a recommendation could disrupt production without approval;
+- the analysis exposes personal data or secrets;
+- confidence is higher than the evidence justifies.
+
+Return JSON with supported_claims, unsupported_claims, missing_investigations,
+dangerous_recommendations, privacy_findings, corrected_confidence, and pass.

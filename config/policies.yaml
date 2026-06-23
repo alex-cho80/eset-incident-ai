@@ -1,0 +1,28 @@
+auto_notify:
+  enabled: true
+  conditions:
+    allowed_severities:
+      - low
+      - medium
+    minimum_confidence: 0.80
+    minimum_evidence_coverage: 0.75
+    max_unsupported_claims: 0
+    pii_findings: 0
+    secret_findings: 0
+    destructive_actions: 0
+
+human_approval_required:
+  severities:
+    - high
+    - critical
+  actions:
+    - isolate_device
+    - lock_account
+    - delete_file
+    - terminate_process
+    - block_firewall
+
+discord:
+  redact_personal_data: true
+  include_evidence_ids: true
+  include_raw_iocs: false

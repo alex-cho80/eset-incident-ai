@@ -1,0 +1,99 @@
+version: "1.0"
+
+project:
+  name: eset-incident-ai
+  language: python
+  architecture: hexagonal
+
+roles:
+  claude:
+    role: architecture_owner
+    responsibilities:
+      - requirements_analysis
+      - architecture_design
+      - threat_modeling
+      - task_decomposition
+      - security_review
+      - final_design_approval
+    prohibited:
+      - direct_production_deployment
+      - bypass_test_gate
+      - modify_secrets
+
+  codex:
+    role: implementation_lead
+    responsibilities:
+      - implementation
+      - unit_tests
+      - integration_tests
+      - database_migrations
+      - ci_configuration
+      - pull_request_creation
+    prohibited:
+      - change_architecture_without_adr
+      - bypass_security_gate
+      - access_production_secrets
+
+workflow:
+  stages:
+    - name: specification
+      owner: claude
+      outputs:
+        - task-spec.md
+        - acceptance-criteria.md
+        - threat-assessment.md
+
+    - name: implementation
+      owner: codex
+      requires:
+        - approved-task-spec
+      outputs:
+        - source-code
+        - tests
+        - migration
+
+    - name: deterministic-verification
+      commands:
+        - uv run ruff check .
+        - uv run mypy src
+        - uv run pytest --cov=src --cov-fail-under=85
+        - uv run bandit -r src
+        - uv run pip-audit
+
+    - name: architecture-review
+      owner: claude
+      checks:
+        - architecture_compliance
+        - data_boundary
+        - security_controls
+        - operational_readiness
+
+    - name: security-gate
+      owner: codex
+      commands:
+        - gitleaks detect --no-banner
+        - semgrep scan --config auto
+        - trivy fs .
+        - trivy config .
+
+    - name: pull-request
+      owner: codex
+      requires:
+        - all-tests-passed
+        - security-gate-passed
+        - claude-review-approved
+
+policies:
+  production:
+    require_human_approval: true
+    allow_direct_push: false
+    allow_force_push: false
+
+  secrets:
+    allowed_sources:
+      - environment
+      - secret_manager
+    prohibited_locations:
+      - source_code
+      - dockerfile
+      - git_repository

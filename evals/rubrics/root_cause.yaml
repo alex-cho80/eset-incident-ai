@@ -1,0 +1,9 @@
+criteria:
+  evidence_linkage:
+    weight: 0.4
+  causal_reasoning:
+    weight: 0.3
+  unknowns_identified:
+    weight: 0.2
+  privacy_preserved:
+    weight: 0.1

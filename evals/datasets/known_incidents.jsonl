@@ -1,0 +1,1 @@
+{"case_id":"KI-001","severity":"medium","title":"Suspicious PowerShell download","expected_evidence":["EVD-001"],"expected_requires_approval":false}

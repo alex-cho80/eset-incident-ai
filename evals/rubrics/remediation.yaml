@@ -1,0 +1,9 @@
+criteria:
+  actionability:
+    weight: 0.35
+  approval_marking:
+    weight: 0.3
+  rollback_defined:
+    weight: 0.2
+  production_safety:
+    weight: 0.15
