@@ -34,6 +34,10 @@ class Settings(BaseSettings):
 
     llm_provider: str = "anthropic"
     llm_model: str = ""
+    anthropic_api_key: str = ""
+    anthropic_model: str = ""
+    llm_timeout_seconds: float = 90.0
+    llm_max_retries: int = 2
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
 
