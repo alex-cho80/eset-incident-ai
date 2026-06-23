@@ -10,6 +10,6 @@ jobs:
   eval-placeholder:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate eval fixtures exist
         run: test -f evals/datasets/prompt_injection_cases.jsonl
