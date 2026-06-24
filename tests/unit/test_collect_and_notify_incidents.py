@@ -15,6 +15,7 @@ from eset_incident_ai.domain.entities.analysis import (
     RootCauseAnalysis,
 )
 from eset_incident_ai.domain.entities.incident import Incident
+from eset_incident_ai.domain.enums.severity import Severity
 from eset_incident_ai.infrastructure.discord.incident_notification_builder import (
     SanitizedIncidentNotificationBuilder,
 )
@@ -175,6 +176,45 @@ async def test_collect_and_notify_sends_only_low_and_medium() -> None:
     assert len(approvals.pending) == 1
     assert len(notifier.payloads) == 1
     assert runs.saved_count == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_and_notify_routes_real_eset_high_severity_to_pending_approval() -> None:
+    notifier = FakeNotifier()
+    approvals = FakeApprovalRepository()
+    use_case = CollectAndNotifyIncidents(
+        incident_source=FakeIncidentSource(
+            [
+                {
+                    "uuid": "high-1",
+                    "displayName": "high incident",
+                    "severity": "INCIDENT_SEVERITY_LEVEL_HIGH",
+                }
+            ]
+        ),
+        approval_repository=approvals,
+        collection_run_repository=FakeCollectionRunRepository(),
+        notification_builder=SanitizedIncidentNotificationBuilder(Sanitizer("test-secret")),
+        notification_repository=FakeNotificationRepository(),
+        notifier=notifier,
+    )
+
+    result = await use_case.execute(limit=10)
+
+    assert result.collected_count == 1
+    assert result.notified_count == 0
+    assert result.pending_approval_count == 1
+    assert approvals.pending == [
+        {
+            "incident": {
+                "uuid": "high-1",
+                "displayName": "high incident",
+                "severity": "INCIDENT_SEVERITY_LEVEL_HIGH",
+            },
+            "severity": "high",
+        }
+    ]
+    assert notifier.payloads == []
 
 
 @pytest.mark.asyncio
@@ -411,3 +451,32 @@ def test_notification_builder_normalizes_unknown_severities() -> None:
 
     assert builder.severity({"severity": "info"}).value == "low"
     assert builder.severity({"severity": "unknown"}).value == "low"
+
+
+@pytest.mark.parametrize(
+    ("raw_severity", "expected"),
+    [
+        ("INCIDENT_SEVERITY_LEVEL_LOW", "low"),
+        ("INCIDENT_SEVERITY_LEVEL_MEDIUM", "medium"),
+        ("INCIDENT_SEVERITY_LEVEL_HIGH", "high"),
+        ("INCIDENT_SEVERITY_LEVEL_UNSPECIFIED", "low"),
+        ("low", "low"),
+        ("medium", "medium"),
+        ("high", "high"),
+        ("critical", "critical"),
+        ("info", "low"),
+        ("informational", "low"),
+        (" incident_severity_level_high ", "high"),
+        ("unknown", "low"),
+        ("", "low"),
+        (None, "low"),
+    ],
+)
+def test_notification_builder_parses_supported_severities(
+    raw_severity: object,
+    expected: str,
+) -> None:
+    builder = SanitizedIncidentNotificationBuilder(Sanitizer("test-secret"))
+
+    assert builder.severity({"severity": raw_severity}).value == expected
+    assert len(Severity) == 4

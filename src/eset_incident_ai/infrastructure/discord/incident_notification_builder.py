@@ -12,12 +12,7 @@ class SanitizedIncidentNotificationBuilder:
         self._sanitizer = sanitizer
 
     def severity(self, incident: dict[str, Any]) -> Severity:
-        text = str(incident.get("severity") or "low").lower()
-        if text in {"informational", "info"}:
-            return Severity.LOW
-        if text in {severity.value for severity in Severity}:
-            return Severity(text)
-        return Severity.LOW
+        return Severity.parse(incident.get("severity"))
 
     def build(
         self,

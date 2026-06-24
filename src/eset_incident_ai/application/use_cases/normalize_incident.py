@@ -14,7 +14,7 @@ class NormalizeIncident:
     def execute(self, payload: dict[str, Any]) -> IncidentDTO:
         title = str(payload.get("title") or payload.get("name") or "Untitled incident")
         sanitized_title = self._sanitizer.sanitize_text(title).text
-        severity = Severity(str(payload.get("severity", "low")).lower())
+        severity = Severity.parse(payload.get("severity"))
         return IncidentDTO(
             external_id=str(payload.get("uuid") or payload.get("id")),
             title=sanitized_title,
