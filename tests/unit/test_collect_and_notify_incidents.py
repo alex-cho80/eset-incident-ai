@@ -359,7 +359,7 @@ def test_notification_builder_sanitizes_payload() -> None:
 
     rendered = str(payload)
     assert "alice@example.com" not in rendered
-    assert "10.1.1.25" not in rendered
+    assert "10.1.1.25" in rendered
     assert "C:\\Users\\alice\\" not in rendered
 
 

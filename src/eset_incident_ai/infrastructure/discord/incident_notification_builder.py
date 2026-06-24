@@ -43,7 +43,8 @@ class SanitizedIncidentNotificationBuilder:
             {
                 "name": "Notice",
                 "value": (
-                    "Sanitized ESET incident notification. Raw identifiers are not included."
+                    "Notification: email addresses are pseudonymized; IP addresses and other "
+                    "identifiers are shown as-is."
                 ),
             }
         )

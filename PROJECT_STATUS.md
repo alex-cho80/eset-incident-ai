@@ -1,6 +1,6 @@
 # ESET Incident AI Project Status
 
-Updated: 2026-06-23
+Updated: 2026-06-23 (Anthropic LLM gateway live-verified and pushed)
 
 ## Current State
 
@@ -25,9 +25,19 @@ Implemented capabilities:
 - Knowledge ingestion for `.md` and `.txt` files under `knowledge/`.
 - Deterministic local embeddings for offline RAG development.
 - Knowledge search API and CLI.
-- RAG evidence based local analysis API.
-- Automatic Low and Medium Discord notifications now include local RAG analysis summary,
+- RAG evidence based analysis API.
+- Automatic Low and Medium Discord notifications now include RAG analysis summary,
   confidence, evidence coverage, evidence IDs, and immediate action.
+- `AnthropicGateway` as a real LLM analysis backend: transport retries on connection/timeout/
+  429/5xx errors, one retry on schema validation failure, fabricated evidence IDs rejected and
+  retried, prompt-injection detections appended to `limitations`, sanitized title/summary used
+  in the prompt.
+- `_get_llm_gateway()` provider-selection factory: selects `AnthropicGateway` only when
+  `LLM_PROVIDER=anthropic` and both `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` are set; falls
+  back to `LocalAnalysisGateway` silently otherwise.
+- IP address pseudonymization removed from the shared sanitizer by explicit project-owner
+  decision. Raw private and public IPs now flow to the Discord notification builder and the LLM
+  gateway prompt.
 
 ## Verified Runtime Flow
 
@@ -44,6 +54,23 @@ Verified manually:
 - Knowledge search returns indexed evidence chunks.
 - Analysis API returns root cause, remediation, confidence, evidence coverage, and evidence IDs.
 - RAG evidence is attached to analysis after knowledge ingest.
+- `POST /api/v1/analyses/run` verified against the live Anthropic API (model `claude-sonnet-4-6`,
+  prompt `config/prompts/incident_analysis.jinja2`) with a real `ANTHROPIC_API_KEY` configured,
+  returning `200 OK` with a schema-valid root cause and remediation payload.
+
+Three bugs were found and fixed only by this live verification (spec review alone did not
+surface them):
+
+1. `docker compose restart` does not re-read `.env`/`env_file` changes — it just restarts the
+   existing container with its old environment. Changing `.env` or code requires
+   `sudo docker compose up -d --build <service>`.
+2. `LLM_TIMEOUT_SECONDS=30` was too short for the combined root-cause + remediation call (up to
+   4096 tokens); raised the default to `90` in `settings/config.py`, `.env`, and `.env.example`.
+3. The model sometimes wrapped JSON responses in markdown code fences, breaking `json.loads`;
+   `structured_output.py` now strips code fences before parsing (`_strip_code_fence`).
+4. Evidence-id validation rejected the `no-supporting-evidence` sentinel whenever any evidence
+   was retrieved, even if irrelevant to the specific claim. Fixed so the sentinel is always a
+   valid id (`{...} | {_NO_EVIDENCE_ID}` in the gateway).
 
 ## Important Commands
 
@@ -129,10 +156,13 @@ docker compose config --quiet
 
 Most recent known result:
 
-- Tests: `77 passed`
-- Coverage: `86.94%`
+- Tests: `101 passed`
+- Coverage: `88.08%`
+- ruff format / ruff check: clean
+- mypy: no issues (109 source files)
 - Bandit: no issues
 - pip-audit: no known vulnerabilities
+- `docker compose config --quiet`: clean
 
 ## Security Notes
 
@@ -141,33 +171,45 @@ Most recent known result:
 - The Discord webhook and ESET tokens pasted during development should be considered exposed and rotated.
 - Discord notifications are sanitized and should not include raw identifiers.
 - High and Critical incidents require human approval before notification or action.
+- **Known open gap (intentionally not fixed yet):** the sanitizer only pseudonymizes emails,
+  Windows user-home paths, and `token`/`secret`/`password`/`webhook` key-value pairs. It does
+  **not** catch IP addresses, hostnames, or free-text employee identifiers (e.g. a
+  branch/name/employee-number string embedded in an ESET `description` field). A real production
+  incident was delivered to Discord on 2026-06-23 with such an identifier exposed despite the
+  message claiming "Raw identifiers are not included." The user was offered immediate mitigation
+  (`DISCORD_ENABLED=false`, sanitizer fix, message deletion) and explicitly declined, choosing to
+  accept the risk on that channel for now. Treat this as still open before pointing any new
+  Discord channel at this code as-is.
+- **Known open gap / project owner decision (2026-06-24):** the project owner explicitly decided
+  to stop masking IP addresses in both the Discord notification and the Anthropic LLM prompt
+  paths; both use the same shared `Sanitizer`. Raw private and public IP addresses now reach
+  Discord and Anthropic's API. Email addresses, Windows paths, and `token`/`secret`/`password`/
+  `webhook` key-value pairs are still masked.
 
-## GitHub Push Blocker
+## GitHub Push
 
-At the time of this status update:
-
-- `/home/devops/project/eset-incident-ai` is not initialized as a Git repository.
-- No Git remote is configured.
-- GitHub CLI `gh` is not installed in the environment.
-
-To push this project to GitHub, install and authenticate GitHub CLI or provide another
-authenticated Git remote workflow, then initialize the repository and add an origin remote.
-
-Example follow-up commands after prerequisites are ready:
+Resolved. The repository is initialized, has an `origin` remote configured over HTTPS (PAT-based
+credential helper), and `main` is pushed and up to date:
 
 ```bash
-git init
-git add .
-git commit -m "Implement ESET incident AI operational flow"
-git branch -M main
-git remote add origin <github-repository-url>
-git push -u origin main
+git remote -v
+# origin  https://github.com/alex-cho80/eset-incident-ai.git (fetch)
+# origin  https://github.com/alex-cho80/eset-incident-ai.git (push)
 ```
+
+Commit history so far:
+
+- `a1f8f89` Initial commit
+- `d7c430a` Implement ESET incident AI operational flow
+- `9941b11` Add Anthropic LLM gateway with provider-selection factory
 
 ## Remaining Future Enhancements
 
-- Replace `LocalAnalysisGateway` with OpenAI or Anthropic gateway when provider credentials are ready.
 - Expand ESET evidence collection with detections, devices, timelines, and asset context.
 - Add more runbooks, ESET guides, internal policies, and MITRE content to `knowledge/`.
 - Evaluate analysis quality with curated datasets.
-- Harden Kubernetes and Helm deployment manifests for production.
+- Close the sanitizer hostname/employee-identifier gap described above (deferred by user choice,
+  not forgotten).
+
+Kubernetes/Helm hardening was explicitly decided against (2026-06-23) — Docker Compose remains
+the deployment target for this project.

@@ -266,9 +266,9 @@ async def test_sanitizer_applied_to_prompt() -> None:
 
     prompt = client.messages.prompts[0]
     assert "alice@example.com" not in prompt
-    assert "10.1.1.25" not in prompt
+    assert "10.1.1.25" in prompt
     assert "EMAIL_" in prompt
-    assert "PRIVATE_IP_" in prompt
+    assert "PRIVATE_IP_" not in prompt
 
 
 @pytest.mark.asyncio

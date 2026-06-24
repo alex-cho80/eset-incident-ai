@@ -35,7 +35,7 @@ def test_approval_repository_sanitizes_payload() -> None:
 
     assert "ignored" not in payload
     assert "alice@example.com" not in str(payload)
-    assert "10.1.1.25" not in str(payload)
+    assert "10.1.1.25" in str(payload)
 
 
 def test_approval_repository_maps_row_to_dto() -> None:
