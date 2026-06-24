@@ -12,9 +12,7 @@ class Severity(StrEnum):
     @classmethod
     def parse(cls, value: object) -> Severity:
         text = str(value or "low").strip().lower()
-        prefix = "incident_severity_level_"
-        if text.startswith(prefix):
-            text = text.removeprefix(prefix)
+        text = text.split("_level_")[-1]
         if text in {"informational", "info", "unspecified"}:
             return cls.LOW
         if text in {severity.value for severity in cls}:

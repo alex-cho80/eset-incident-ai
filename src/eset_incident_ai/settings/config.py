@@ -21,10 +21,15 @@ class Settings(BaseSettings):
     eset_access_token_expires_in: int = 3600
     eset_poll_interval_seconds: int = 300
     eset_page_size: int = 100
+    eset_detection_page_size: int = 1000
     incident_notify_limit: int = 10
     incident_notify_cron_hour: int = 10
     incident_notify_cron_minute: int = 0
     incident_notify_timezone: str = "Asia/Seoul"
+    detection_notify_limit: int = 500
+    detection_max_pages_per_run: int = 1000
+    detection_backfill_window_days: int = 30
+    detection_notify_cron_interval_minutes: int = 60
 
     database_url: str = "postgresql+psycopg://incident_ai:password@postgres:5432/incident_ai"
     redis_url: str = "redis://redis:6379/0"

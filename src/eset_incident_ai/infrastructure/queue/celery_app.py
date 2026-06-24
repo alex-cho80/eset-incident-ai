@@ -29,7 +29,13 @@ if Celery is not None:
                 minute=settings.incident_notify_cron_minute,
             ),
             "args": (settings.incident_notify_limit,),
-        }
+        },
+        "periodic-eset-detection-notification": {
+            "task": "eset_incident_ai.collect_and_notify_detections",
+            "schedule": crontab(
+                minute=f"*/{settings.detection_notify_cron_interval_minutes}",
+            ),
+        },
     }
 else:
     celery_app = None

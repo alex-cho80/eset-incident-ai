@@ -6,18 +6,34 @@ from eset_incident_ai.application.ports.llm_gateway import LlmGateway
 from eset_incident_ai.application.ports.notifier import Notifier
 from eset_incident_ai.application.use_cases.analyze_incident import AnalyzeIncident
 from eset_incident_ai.application.use_cases.check_readiness import CheckReadiness
+from eset_incident_ai.application.use_cases.collect_and_notify_detections import (
+    CollectAndNotifyDetections,
+)
 from eset_incident_ai.application.use_cases.collect_and_notify_incidents import (
     CollectAndNotifyIncidents,
 )
 from eset_incident_ai.application.use_cases.list_collection_runs import ListCollectionRuns
+from eset_incident_ai.application.use_cases.list_detection_collection_runs import (
+    ListDetectionCollectionRuns,
+)
 from eset_incident_ai.application.use_cases.list_pending_approvals import ListPendingApprovals
+from eset_incident_ai.application.use_cases.list_pending_detection_approvals import (
+    ListPendingDetectionApprovals,
+)
 from eset_incident_ai.application.use_cases.review_pending_approval import ReviewPendingApproval
+from eset_incident_ai.application.use_cases.review_pending_detection_approval import (
+    ReviewPendingDetectionApproval,
+)
 from eset_incident_ai.application.use_cases.search_knowledge import SearchKnowledge
+from eset_incident_ai.infrastructure.discord.detection_notification_builder import (
+    SanitizedDetectionNotificationBuilder,
+)
 from eset_incident_ai.infrastructure.discord.incident_notification_builder import (
     SanitizedIncidentNotificationBuilder,
 )
 from eset_incident_ai.infrastructure.discord.webhook_client import DiscordWebhookClient
 from eset_incident_ai.infrastructure.eset.auth_client import EsetAuthClient
+from eset_incident_ai.infrastructure.eset.detection_client import EsetDetectionClient
 from eset_incident_ai.infrastructure.eset.incident_client import EsetIncidentClient
 from eset_incident_ai.infrastructure.llm.anthropic_gateway import AnthropicGateway
 from eset_incident_ai.infrastructure.llm.local_gateway import LocalAnalysisGateway
@@ -27,6 +43,12 @@ from eset_incident_ai.infrastructure.persistence.approval_repository import (
 )
 from eset_incident_ai.infrastructure.persistence.collection_run_repository import (
     PostgresCollectionRunRepository,
+)
+from eset_incident_ai.infrastructure.persistence.detection_approval_repository import (
+    PostgresDetectionApprovalRepository,
+)
+from eset_incident_ai.infrastructure.persistence.detection_collection_run_repository import (
+    PostgresDetectionCollectionRunRepository,
 )
 from eset_incident_ai.infrastructure.persistence.notification_repository import (
     PostgresNotificationRepository,
@@ -118,10 +140,54 @@ def get_collect_and_notify_incidents() -> CollectAndNotifyIncidents:
     )
 
 
+def get_collect_and_notify_detections() -> CollectAndNotifyDetections:
+    settings = get_settings()
+    sanitizer = Sanitizer(settings.sanitizer_hmac_secret)
+    auth_client = EsetAuthClient(
+        auth_url=settings.eset_auth_url,
+        username=settings.eset_username,
+        password=settings.eset_password,
+        client_id=settings.eset_client_id,
+        client_secret=settings.eset_client_secret,
+        access_token=settings.eset_access_token,
+        access_token_expires_in=settings.eset_access_token_expires_in,
+    )
+    notifier: Notifier
+    if settings.discord_enabled:
+        notifier = DiscordWebhookClient(webhook_url=settings.discord_webhook_url)
+    else:
+        notifier = DisabledNotifier()
+
+    return CollectAndNotifyDetections(
+        detection_source=EsetDetectionClient(
+            base_url=settings.eset_base_url,
+            auth_client=auth_client,
+        ),
+        approval_repository=PostgresDetectionApprovalRepository(
+            database_url=settings.database_url,
+            sanitizer=sanitizer,
+        ),
+        collection_run_repository=PostgresDetectionCollectionRunRepository(settings.database_url),
+        notification_builder=SanitizedDetectionNotificationBuilder(sanitizer),
+        notification_repository=PostgresNotificationRepository(settings.database_url),
+        notifier=notifier,
+    )
+
+
 def get_list_pending_approvals() -> ListPendingApprovals:
     settings = get_settings()
     return ListPendingApprovals(
         PostgresApprovalRepository(
+            database_url=settings.database_url,
+            sanitizer=Sanitizer(settings.sanitizer_hmac_secret),
+        )
+    )
+
+
+def get_list_pending_detection_approvals() -> ListPendingDetectionApprovals:
+    settings = get_settings()
+    return ListPendingDetectionApprovals(
+        PostgresDetectionApprovalRepository(
             database_url=settings.database_url,
             sanitizer=Sanitizer(settings.sanitizer_hmac_secret),
         )
@@ -148,9 +214,36 @@ def get_review_pending_approval() -> ReviewPendingApproval:
     )
 
 
+def get_review_pending_detection_approval() -> ReviewPendingDetectionApproval:
+    settings = get_settings()
+    sanitizer = Sanitizer(settings.sanitizer_hmac_secret)
+    notifier: Notifier
+    if settings.discord_enabled:
+        notifier = DiscordWebhookClient(webhook_url=settings.discord_webhook_url)
+    else:
+        notifier = DisabledNotifier()
+
+    return ReviewPendingDetectionApproval(
+        approval_repository=PostgresDetectionApprovalRepository(
+            database_url=settings.database_url,
+            sanitizer=sanitizer,
+        ),
+        notification_builder=SanitizedDetectionNotificationBuilder(sanitizer),
+        notification_repository=PostgresNotificationRepository(settings.database_url),
+        notifier=notifier,
+    )
+
+
 def get_list_collection_runs() -> ListCollectionRuns:
     settings = get_settings()
     return ListCollectionRuns(PostgresCollectionRunRepository(settings.database_url))
+
+
+def get_list_detection_collection_runs() -> ListDetectionCollectionRuns:
+    settings = get_settings()
+    return ListDetectionCollectionRuns(
+        PostgresDetectionCollectionRunRepository(settings.database_url)
+    )
 
 
 def get_search_knowledge() -> SearchKnowledge:
