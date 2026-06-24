@@ -1,6 +1,7 @@
 from eset_incident_ai.api.dependencies import (
     get_analyze_incident,
     get_check_readiness,
+    get_collect_and_notify_detections,
     get_collect_and_notify_incidents,
     get_list_collection_runs,
     get_list_pending_approvals,
@@ -9,6 +10,9 @@ from eset_incident_ai.api.dependencies import (
 )
 from eset_incident_ai.application.use_cases.analyze_incident import AnalyzeIncident
 from eset_incident_ai.application.use_cases.check_readiness import CheckReadiness
+from eset_incident_ai.application.use_cases.collect_and_notify_detections import (
+    CollectAndNotifyDetections,
+)
 from eset_incident_ai.application.use_cases.collect_and_notify_incidents import (
     CollectAndNotifyIncidents,
 )
@@ -27,6 +31,20 @@ def test_get_collect_and_notify_incidents_uses_settings(monkeypatch) -> None:
     use_case = get_collect_and_notify_incidents()
 
     assert isinstance(use_case, CollectAndNotifyIncidents)
+    get_settings.cache_clear()
+
+
+def test_get_collect_and_notify_detections_wires_analyzer(monkeypatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("SANITIZER_HMAC_SECRET", "test-secret")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
+    monkeypatch.setenv("ESET_ACCESS_TOKEN", "token-value")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/db")
+
+    use_case = get_collect_and_notify_detections()
+
+    assert isinstance(use_case, CollectAndNotifyDetections)
+    assert use_case._analyzer is not None  # noqa: SLF001
     get_settings.cache_clear()
 
 

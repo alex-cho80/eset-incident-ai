@@ -58,7 +58,12 @@ class FakeDetectionNotificationBuilder:
     def severity(self, detection: dict[str, object]) -> object:
         return detection["severityLevel"]
 
-    def build(self, detection: dict[str, object]) -> dict[str, object]:
+    def build(
+        self,
+        detection: dict[str, object],
+        analysis: object | None = None,
+    ) -> dict[str, object]:
+        _ = analysis
         return {"detection": detection}
 
 

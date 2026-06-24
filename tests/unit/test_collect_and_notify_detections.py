@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,6 +12,14 @@ from eset_incident_ai.application.ports.detection_source import DetectionPage
 from eset_incident_ai.application.use_cases.collect_and_notify_detections import (
     CollectAndNotifyDetections,
 )
+from eset_incident_ai.domain.entities.analysis import (
+    EvidenceClaim,
+    IncidentAnalysisResult,
+    RemediationAction,
+    RootCauseAnalysis,
+)
+from eset_incident_ai.domain.entities.incident import Incident
+from eset_incident_ai.domain.enums.severity import Severity
 from eset_incident_ai.infrastructure.discord.detection_notification_builder import (
     SanitizedDetectionNotificationBuilder,
 )
@@ -124,6 +133,35 @@ class FakeDetectionCollectionRunRepository:
         return self._latest
 
 
+class FakeAnalyzer:
+    def __init__(self, *, fail_on: str | None = None) -> None:
+        self.fail_on = fail_on
+        self.incidents: list[Incident] = []
+
+    async def execute(self, *, incident: Incident, tenant_scope: str) -> IncidentAnalysisResult:
+        _ = tenant_scope
+        self.incidents.append(incident)
+        if incident.id == self.fail_on:
+            raise RuntimeError("analysis failed")
+        return _analysis_result()
+
+
+class SpyDetectionNotificationBuilder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[dict[str, Any], IncidentAnalysisResult | None]] = []
+
+    def severity(self, detection: dict[str, Any]) -> Severity:
+        return Severity.parse(detection.get("severityLevel"))
+
+    def build(
+        self,
+        detection: dict[str, Any],
+        analysis: IncidentAnalysisResult | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append((detection, analysis))
+        return {"uuid": detection.get("uuid"), "has_analysis": analysis is not None}
+
+
 def _detection(
     uuid: str,
     *,
@@ -138,12 +176,47 @@ def _detection(
     }
 
 
+def _analysis_result() -> IncidentAnalysisResult:
+    return IncidentAnalysisResult(
+        root_cause=RootCauseAnalysis(
+            executive_summary="RAG evidence indicates detection handling.",
+            direct_cause=[
+                EvidenceClaim(
+                    claim="Detection matched a known workflow.",
+                    evidence_ids=["evidence-1"],
+                    confidence=0.8,
+                )
+            ],
+            root_causes=[
+                EvidenceClaim(
+                    claim="Endpoint telemetry needs confirmation.",
+                    evidence_ids=["evidence-2"],
+                    confidence=0.7,
+                )
+            ],
+            false_positive_probability=0.2,
+        ),
+        remediation=[
+            RemediationAction(
+                priority="immediate",
+                action="Check endpoint isolation status.",
+                rationale="Immediate containment should be verified.",
+                rollback=None,
+                requires_approval=False,
+            )
+        ],
+        overall_confidence=0.8,
+        evidence_coverage=0.4,
+    )
+
+
 def _use_case(
     source: FakeDetectionSource,
     runs: FakeDetectionCollectionRunRepository,
     approvals: FakeDetectionApprovalRepository | None = None,
     notifications: FakeNotificationRepository | None = None,
     notifier: FakeNotifier | None = None,
+    analyzer: object | None = None,
 ) -> tuple[
     CollectAndNotifyDetections,
     FakeDetectionApprovalRepository,
@@ -161,6 +234,7 @@ def _use_case(
             notification_builder=SanitizedDetectionNotificationBuilder(Sanitizer("test-secret")),
             notification_repository=notification_repo,
             notifier=fake_notifier,
+            analyzer=analyzer,  # type: ignore[arg-type]
             now=datetime(2026, 6, 24, tzinfo=UTC),
         ),
         approval_repo,
@@ -348,6 +422,139 @@ async def test_collect_detections_routes_high_to_approval_and_low_to_notify() ->
     assert approvals.pending[0]["detection"]["uuid"] == "high"
     assert len(notifier.payloads) == 1
     assert len(notifications.marked) == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_detections_attaches_analysis_for_low_and_medium() -> None:
+    source = FakeDetectionSource(
+        [
+            DetectionPage(
+                detections=[
+                    {
+                        **_detection("medium", severity="SEVERITY_LEVEL_MEDIUM"),
+                        "displayName": "Endpoint threat",
+                        "context": {"경로": "C:\\Users\\alice\\Downloads\\sample.exe"},
+                    }
+                ],
+                next_page_token=None,
+            )
+        ]
+    )
+    runs = FakeDetectionCollectionRunRepository()
+    approvals = FakeDetectionApprovalRepository()
+    notifications = FakeNotificationRepository()
+    notifier = FakeNotifier()
+    analyzer = FakeAnalyzer()
+    builder = SpyDetectionNotificationBuilder()
+    use_case = CollectAndNotifyDetections(
+        detection_source=source,
+        approval_repository=approvals,
+        collection_run_repository=runs,
+        notification_builder=builder,
+        notification_repository=notifications,
+        notifier=notifier,
+        analyzer=analyzer,  # type: ignore[arg-type]
+        now=datetime(2026, 6, 24, tzinfo=UTC),
+    )
+
+    result = await use_case.execute(
+        limit=10,
+        page_size=1000,
+        max_pages_per_run=10,
+        backfill_window_days=30,
+    )
+
+    assert result.notified_count == 1
+    assert analyzer.incidents[0].title == "Endpoint threat"
+    assert (
+        analyzer.incidents[0].summary
+        == '{"경로": "C:\\\\Users\\\\alice\\\\Downloads\\\\sample.exe"}'
+    )
+    assert analyzer.incidents[0].severity == Severity.MEDIUM
+    assert analyzer.incidents[0].normalized_payload == {
+        "source": "eset_detection",
+        "raw_keys": ["context", "displayName", "occurTime", "severityLevel", "uuid"],
+    }
+    assert builder.calls[0][1] == _analysis_result()
+    assert notifier.payloads == [{"uuid": "medium", "has_analysis": True}]
+    assert runs.success_tokens == [None]
+
+
+@pytest.mark.asyncio
+async def test_collect_detections_never_analyzes_high_or_critical() -> None:
+    source = FakeDetectionSource(
+        [
+            DetectionPage(
+                detections=[
+                    _detection("high", severity="SEVERITY_LEVEL_HIGH"),
+                    _detection("critical", severity="SEVERITY_LEVEL_CRITICAL"),
+                ],
+                next_page_token=None,
+            )
+        ]
+    )
+    analyzer = type("Analyzer", (), {"execute": AsyncMock(return_value=_analysis_result())})()
+    use_case, approvals, _, notifier = _use_case(
+        source,
+        FakeDetectionCollectionRunRepository(),
+        analyzer=analyzer,
+    )
+
+    result = await use_case.execute(
+        limit=10,
+        page_size=1000,
+        max_pages_per_run=10,
+        backfill_window_days=30,
+    )
+
+    assert result.pending_approval_count == 2
+    assert len(approvals.pending) == 2
+    assert notifier.payloads == []
+    analyzer.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_collect_detections_analysis_failure_notifies_and_saves_success() -> None:
+    source = FakeDetectionSource(
+        [
+            DetectionPage(
+                detections=[
+                    _detection("fails", severity="SEVERITY_LEVEL_LOW"),
+                    _detection("works", severity="SEVERITY_LEVEL_LOW"),
+                ],
+                next_page_token=None,
+            )
+        ]
+    )
+    runs = FakeDetectionCollectionRunRepository()
+    notifier = FakeNotifier()
+    builder = SpyDetectionNotificationBuilder()
+    use_case = CollectAndNotifyDetections(
+        detection_source=source,
+        approval_repository=FakeDetectionApprovalRepository(),
+        collection_run_repository=runs,
+        notification_builder=builder,
+        notification_repository=FakeNotificationRepository(),
+        notifier=notifier,
+        analyzer=FakeAnalyzer(fail_on="fails"),  # type: ignore[arg-type]
+        now=datetime(2026, 6, 24, tzinfo=UTC),
+    )
+
+    result = await use_case.execute(
+        limit=10,
+        page_size=1000,
+        max_pages_per_run=10,
+        backfill_window_days=30,
+    )
+
+    assert result.notified_count == 2
+    assert [call[1] for call in builder.calls] == [None, _analysis_result()]
+    assert notifier.payloads == [
+        {"uuid": "fails", "has_analysis": False},
+        {"uuid": "works", "has_analysis": True},
+    ]
+    assert runs.failure_message is None
+    assert runs.success_tokens == [None]
 
 
 @pytest.mark.asyncio

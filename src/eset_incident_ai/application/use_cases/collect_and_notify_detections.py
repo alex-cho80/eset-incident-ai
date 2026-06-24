@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
@@ -16,8 +18,13 @@ from eset_incident_ai.application.ports.detection_notification_builder import (
 from eset_incident_ai.application.ports.detection_source import DetectionSource
 from eset_incident_ai.application.ports.notification_repository import NotificationRepository
 from eset_incident_ai.application.ports.notifier import Notifier
+from eset_incident_ai.application.use_cases.analyze_incident import AnalyzeIncident
+from eset_incident_ai.domain.entities.analysis import IncidentAnalysisResult
+from eset_incident_ai.domain.entities.incident import Incident
 from eset_incident_ai.domain.enums.severity import Severity
 from eset_incident_ai.infrastructure.discord.message_builder import build_idempotency_key
+
+logger = logging.getLogger(__name__)
 
 
 class CollectAndNotifyDetections:
@@ -30,6 +37,7 @@ class CollectAndNotifyDetections:
         notification_builder: DetectionNotificationBuilder,
         notification_repository: NotificationRepository,
         notifier: Notifier,
+        analyzer: AnalyzeIncident | None = None,
         destination: str = "discord",
         now: datetime | None = None,
     ) -> None:
@@ -39,6 +47,7 @@ class CollectAndNotifyDetections:
         self._notification_builder = notification_builder
         self._notification_repository = notification_repository
         self._notifier = notifier
+        self._analyzer = analyzer
         self._destination = destination
         self._now = now
 
@@ -120,7 +129,8 @@ class CollectAndNotifyDetections:
                     duplicate_skipped_count += 1
                     continue
 
-                await self._notifier.send(self._notification_builder.build(detection))
+                analysis = await self._analyze_detection(detection, severity)
+                await self._notifier.send(self._notification_builder.build(detection, analysis))
                 await self._notification_repository.mark_delivered(
                     idempotency_key=idempotency_key,
                     destination=self._destination,
@@ -172,6 +182,54 @@ class CollectAndNotifyDetections:
         if not message:
             message = "No error detail provided."
         return f"{type(exc).__name__}: {message}"[:500]
+
+    async def _analyze_detection(
+        self,
+        detection: dict[str, object],
+        severity: Severity,
+    ) -> IncidentAnalysisResult | None:
+        if self._analyzer is None:
+            return None
+        try:
+            return await self._analyzer.execute(
+                incident=self._to_analysis_incident(detection, severity),
+                tenant_scope="default",
+            )
+        except Exception:
+            detection_id = str(detection.get("uuid") or detection.get("displayName") or "unknown")
+            logger.warning(
+                "Detection analysis failed; sending notification without analysis",
+                extra={"detection_id": detection_id},
+                exc_info=True,
+            )
+            return None
+
+    def _to_analysis_incident(
+        self,
+        detection: dict[str, object],
+        severity: Severity,
+    ) -> Incident:
+        detection_id = str(detection.get("uuid") or detection.get("displayName") or "unknown")
+        title = str(detection.get("displayName") or detection_id)
+        context = detection.get("context")
+        summary = self._stringify_context(context)
+        return Incident(
+            id=detection_id,
+            external_id=detection_id,
+            title=title,
+            severity=severity,
+            detected_at=None,
+            summary=summary,
+            normalized_payload={
+                "source": "eset_detection",
+                "raw_keys": sorted(str(key) for key in detection.keys()),
+            },
+        )
+
+    def _stringify_context(self, value: object) -> str:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
 
     def _idempotency_key(self, detection: dict[str, object]) -> str:
         detection_id = str(detection.get("uuid") or detection.get("displayName") or "unknown")

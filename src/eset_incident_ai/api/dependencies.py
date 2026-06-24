@@ -171,6 +171,10 @@ def get_collect_and_notify_detections() -> CollectAndNotifyDetections:
         notification_builder=SanitizedDetectionNotificationBuilder(sanitizer),
         notification_repository=PostgresNotificationRepository(settings.database_url),
         notifier=notifier,
+        analyzer=AnalyzeIncident(
+            vector_repository=PgVectorRepository(settings.database_url),
+            llm_gateway=_get_llm_gateway(settings),
+        ),
     )
 
 
