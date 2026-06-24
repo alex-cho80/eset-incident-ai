@@ -36,6 +36,46 @@ def test_sanitizer_masks_secret_values() -> None:
     assert result.text.count("<SECRET_REDACTED>") == 2
 
 
+def test_sanitizer_masks_domain_accounts_consistently() -> None:
+    sanitizer = Sanitizer("test-secret")
+
+    first = sanitizer.sanitize_text("account nt authority\\local service triggered")
+    second = sanitizer.sanitize_text("account nt authority\\local service triggered")
+    corp = sanitizer.sanitize_text("account CORP\\jdoe triggered")
+
+    assert first.text == second.text
+    assert "nt authority\\local service" not in first.text
+    assert "CORP\\jdoe" not in corp.text
+    assert "ACCOUNT_" in first.text
+    assert "ACCOUNT_" in corp.text
+
+
+def test_sanitizer_preserves_multi_segment_program_paths() -> None:
+    sanitizer = Sanitizer("test-secret")
+    tomcat_path = "apache software foundation\\tomcat 9.0\\bin\\tomcat9.exe"
+    program_files_path = "C:\\Program Files\\Vendor\\App\\app.exe"
+
+    assert sanitizer.sanitize_text(tomcat_path).text == tomcat_path
+    assert sanitizer.sanitize_text(program_files_path).text == program_files_path
+
+
+def test_sanitizer_masks_legacy_windows_and_unix_home_paths() -> None:
+    sanitizer = Sanitizer("test-secret")
+
+    result = sanitizer.sanitize_text(
+        "legacy C:\\Documents and Settings\\alice\\Desktop\\a.exe "
+        "unix /home/bob/downloads/a.exe "
+        "modern C:\\Users\\carol\\Downloads\\a.exe"
+    )
+
+    assert "C:\\Documents and Settings\\alice\\" not in result.text
+    assert "/home/bob/" not in result.text
+    assert "C:\\Users\\carol\\" not in result.text
+    assert "<USER_HOME>\\Desktop\\a.exe" in result.text
+    assert "<USER_HOME>/downloads/a.exe" in result.text
+    assert "<USER_HOME>\\Downloads\\a.exe" in result.text
+
+
 def test_sanitizer_requires_secret() -> None:
     try:
         Sanitizer("")

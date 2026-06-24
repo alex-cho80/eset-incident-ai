@@ -26,7 +26,8 @@ class SanitizedDetectionNotificationBuilder:
         title = self._safe_text(
             "displayName", detection.get("displayName") or detection.get("uuid")
         )
-        context = self._safe_text("context", detection.get("context"), fallback="No context")
+        context_value = detection.get("context")
+        context = self._safe_text("context", context_value, fallback="No context")
         fields: list[dict[str, object]] = [
             {
                 "name": "Category",
@@ -40,17 +41,23 @@ class SanitizedDetectionNotificationBuilder:
             },
             {
                 "name": "User",
-                "value": self._safe_text("userName", detection.get("userName")),
+                "value": self._safe_text(
+                    "userName", self._detection_user_name(detection, context_value)
+                ),
                 "inline": True,
             },
             {
                 "name": "Device",
-                "value": self._safe_text("device", detection.get("device")),
+                "value": self._safe_text(
+                    "device", self._detection_device(detection, context_value)
+                ),
                 "inline": True,
             },
             {
                 "name": "Object",
-                "value": self._safe_text("objectName", detection.get("objectName")),
+                "value": self._safe_text(
+                    "objectName", self._detection_object_name(detection, context_value)
+                ),
             },
             {
                 "name": "Object URL",
@@ -85,6 +92,33 @@ class SanitizedDetectionNotificationBuilder:
                 }
             ],
         }
+
+    def _detection_user_name(self, detection: dict[str, Any], context: object) -> object:
+        if detection.get("userName"):
+            return detection.get("userName")
+        if isinstance(context, dict):
+            return context.get("userName")
+        return None
+
+    def _detection_device(self, detection: dict[str, Any], context: object) -> object:
+        if detection.get("device"):
+            return detection.get("device")
+        if not isinstance(context, dict):
+            return None
+        device_uuid = context.get("deviceUuid")
+        if device_uuid:
+            return f"uuid:{device_uuid}"
+        return context.get("device")
+
+    def _detection_object_name(self, detection: dict[str, Any], context: object) -> object:
+        if detection.get("objectName"):
+            return detection.get("objectName")
+        if not isinstance(context, dict):
+            return None
+        process = context.get("process")
+        if not isinstance(process, dict):
+            return None
+        return process.get("path") or process.get("name")
 
     def _analysis_fields(self, analysis: IncidentAnalysisResult) -> list[dict[str, object]]:
         summary = self._safe_text("analysis", analysis.root_cause.executive_summary)

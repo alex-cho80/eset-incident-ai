@@ -92,6 +92,96 @@ def test_detection_notification_builder_renders_dict_context_as_json() -> None:
     assert "'message':" not in str(payload)
 
 
+def test_detection_notification_builder_reads_real_firewall_context_fallbacks() -> None:
+    builder = SanitizedDetectionNotificationBuilder(Sanitizer("test-secret"))
+
+    payload = builder.build(
+        {
+            "uuid": "detection-1",
+            "category": "DETECTION_CATEGORY_FIREWALL_RULE",
+            "severityLevel": "SEVERITY_LEVEL_MEDIUM",
+            "context": {
+                "userName": "nt authority\\local service",
+                "deviceUuid": "cf48940b-bbc9-41bb-88a7-d4510c5cf214",
+                "process": {
+                    "path": "%PROGRAMFILES%\\apache software foundation\\tomcat "
+                    "9.0\\bin\\tomcat9.exe"
+                },
+                "circumstances": "Security vulnerability exploitation attempt",
+            },
+        }
+    )
+
+    fields = payload["embeds"][0]["fields"]  # type: ignore[index]
+    values_by_name = {str(field["name"]): field["value"] for field in fields}  # type: ignore[index]
+    assert values_by_name["User"] == "nt authority\\local service"
+    assert values_by_name["Device"] == "uuid:cf48940b-bbc9-41bb-88a7-d4510c5cf214"
+    assert (
+        values_by_name["Object"]
+        == "%PROGRAMFILES%\\apache software foundation\\tomcat 9.0\\bin\\tomcat9.exe"
+    )
+
+
+def test_detection_notification_builder_context_fallbacks_are_guarded() -> None:
+    builder = SanitizedDetectionNotificationBuilder(Sanitizer("test-secret"))
+
+    payload = builder.build(
+        {
+            "uuid": "detection-1",
+            "category": "DETECTION_CATEGORY_CORRELATION_RULE",
+            "severityLevel": "SEVERITY_LEVEL_MEDIUM",
+            "context": {
+                "userName": "",
+                "device": "fallback-host",
+                "process": {"path": "", "name": "arp-check.exe"},
+            },
+        }
+    )
+    non_dict_payload = builder.build(
+        {
+            "uuid": "detection-2",
+            "severityLevel": "SEVERITY_LEVEL_LOW",
+            "context": ["not", "a", "dict"],
+        }
+    )
+
+    fields = payload["embeds"][0]["fields"]  # type: ignore[index]
+    values_by_name = {str(field["name"]): field["value"] for field in fields}  # type: ignore[index]
+    non_dict_fields = non_dict_payload["embeds"][0]["fields"]  # type: ignore[index]
+    non_dict_values = {str(field["name"]): field["value"] for field in non_dict_fields}  # type: ignore[index]
+    assert values_by_name["User"] == "N/A"
+    assert values_by_name["Device"] == "fallback-host"
+    assert values_by_name["Object"] == "arp-check.exe"
+    assert non_dict_values["User"] == "N/A"
+    assert non_dict_values["Device"] == "N/A"
+    assert non_dict_values["Object"] == "N/A"
+
+
+def test_detection_notification_builder_top_level_values_still_win() -> None:
+    builder = SanitizedDetectionNotificationBuilder(Sanitizer("test-secret"))
+
+    payload = builder.build(
+        {
+            "uuid": "detection-1",
+            "severityLevel": "SEVERITY_LEVEL_MEDIUM",
+            "userName": "top-level-user",
+            "device": "top-level-device",
+            "objectName": "top-level-object",
+            "context": {
+                "userName": "context-user",
+                "deviceUuid": "cf48940b-bbc9-41bb-88a7-d4510c5cf214",
+                "process": {"path": "context-object.exe"},
+            },
+        }
+    )
+
+    fields = payload["embeds"][0]["fields"]  # type: ignore[index]
+    values_by_name = {str(field["name"]): field["value"] for field in fields}  # type: ignore[index]
+    assert values_by_name["User"] == "top-level-user"
+    assert values_by_name["Device"] == "top-level-device"
+    assert values_by_name["Object"] == "top-level-object"
+
+
 def test_detection_notification_builder_footer_without_analysis() -> None:
     builder = SanitizedDetectionNotificationBuilder(Sanitizer("test-secret"))
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
@@ -132,19 +133,51 @@ class PostgresDetectionApprovalRepository:
             "userName",
             "device",
         )
-        return {
+        payload: dict[str, object] = {
             key: self._payload_text(key, detection.get(key))
             for key in sanitized_keys
             if key in detection
         }
+        context = detection.get("context")
+        user_name = self._detection_user_name(detection, context)
+        if user_name:
+            payload["userName"] = self._payload_text("userName", user_name)
+        device = self._detection_device(detection, context)
+        if device:
+            payload["device"] = self._payload_text("device", device)
+        return payload
 
     def _payload_text(self, key: str, value: object) -> str:
+        text = self._text_value(value)
         if key in RAW_DETECTION_APPROVAL_FIELDS:
-            return str(value or "N/A")[:1000]
-        return self._safe_text(value)
+            return text[:1000]
+        return self._safe_text(text)
 
     def _safe_text(self, value: object, *, fallback: str = "N/A") -> str:
-        return self._sanitizer.sanitize_text(str(value or fallback)).text[:1000]
+        return self._sanitizer.sanitize_text(self._text_value(value, fallback=fallback)).text[:1000]
+
+    def _text_value(self, value: object, *, fallback: str = "N/A") -> str:
+        raw_value = value or fallback
+        if isinstance(raw_value, (dict, list)):
+            return json.dumps(raw_value, ensure_ascii=False)
+        return str(raw_value)
+
+    def _detection_user_name(self, detection: dict[str, object], context: object) -> object:
+        if detection.get("userName"):
+            return detection.get("userName")
+        if isinstance(context, dict):
+            return context.get("userName")
+        return None
+
+    def _detection_device(self, detection: dict[str, object], context: object) -> object:
+        if detection.get("device"):
+            return detection.get("device")
+        if not isinstance(context, dict):
+            return None
+        device_uuid = context.get("deviceUuid")
+        if device_uuid:
+            return f"uuid:{device_uuid}"
+        return context.get("device")
 
     def _normalize_database_url(self, database_url: str) -> str:
         parts = urlsplit(database_url)
