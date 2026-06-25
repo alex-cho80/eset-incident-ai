@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -109,6 +110,40 @@ class FakeCollectionRunRepository:
         return None
 
 
+def build_analysis_result() -> IncidentAnalysisResult:
+    return IncidentAnalysisResult(
+        root_cause=RootCauseAnalysis(
+            executive_summary="RAG evidence indicates collector failure handling.",
+            direct_cause=[
+                EvidenceClaim(
+                    claim="Collector failure workflow matched.",
+                    evidence_ids=["evidence-1"],
+                    confidence=0.8,
+                )
+            ],
+            root_causes=[
+                EvidenceClaim(
+                    claim="Root cause requires telemetry confirmation.",
+                    evidence_ids=["evidence-1"],
+                    confidence=0.6,
+                )
+            ],
+            false_positive_probability=0.3,
+        ),
+        remediation=[
+            RemediationAction(
+                priority="immediate",
+                action="Check worker logs.",
+                rationale="Worker logs identify failed collection steps.",
+                rollback=None,
+                requires_approval=False,
+            )
+        ],
+        overall_confidence=0.8,
+        evidence_coverage=0.2,
+    )
+
+
 class FakeAnalyzer:
     def __init__(self) -> None:
         self.incidents: list[Incident] = []
@@ -116,37 +151,20 @@ class FakeAnalyzer:
     async def execute(self, *, incident: Incident, tenant_scope: str) -> IncidentAnalysisResult:
         _ = tenant_scope
         self.incidents.append(incident)
-        return IncidentAnalysisResult(
-            root_cause=RootCauseAnalysis(
-                executive_summary="RAG evidence indicates collector failure handling.",
-                direct_cause=[
-                    EvidenceClaim(
-                        claim="Collector failure workflow matched.",
-                        evidence_ids=["evidence-1"],
-                        confidence=0.8,
-                    )
-                ],
-                root_causes=[
-                    EvidenceClaim(
-                        claim="Root cause requires telemetry confirmation.",
-                        evidence_ids=["evidence-1"],
-                        confidence=0.6,
-                    )
-                ],
-                false_positive_probability=0.3,
-            ),
-            remediation=[
-                RemediationAction(
-                    priority="immediate",
-                    action="Check worker logs.",
-                    rationale="Worker logs identify failed collection steps.",
-                    rollback=None,
-                    requires_approval=False,
-                )
-            ],
-            overall_confidence=0.8,
-            evidence_coverage=0.2,
-        )
+        return build_analysis_result()
+
+
+class FailingAnalyzer:
+    def __init__(self, *, failing_external_ids: set[str]) -> None:
+        self._failing_external_ids = failing_external_ids
+        self.incidents: list[Incident] = []
+
+    async def execute(self, *, incident: Incident, tenant_scope: str) -> IncidentAnalysisResult:
+        _ = tenant_scope
+        self.incidents.append(incident)
+        if incident.external_id in self._failing_external_ids:
+            raise RuntimeError("LLM backend unavailable")
+        return build_analysis_result()
 
 
 @pytest.mark.asyncio
@@ -248,6 +266,68 @@ async def test_collect_and_notify_attaches_analysis_for_notified_incidents() -> 
     assert "Analysis Summary" in rendered
     assert "RAG evidence indicates collector failure handling." in rendered
     assert "80%" in rendered
+
+
+@pytest.mark.asyncio
+async def test_collect_and_notify_continues_when_incident_analysis_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    notifier = FakeNotifier()
+    runs = FakeCollectionRunRepository()
+    analyzer = FailingAnalyzer(failing_external_ids={"low-1"})
+    caplog.set_level(
+        logging.WARNING,
+        logger="eset_incident_ai.application.use_cases.collect_and_notify_incidents",
+    )
+    use_case = CollectAndNotifyIncidents(
+        incident_source=FakeIncidentSource(
+            [
+                {
+                    "uuid": "low-1",
+                    "displayName": "secret incident title alice@example.com",
+                    "description": "secret incident summary",
+                    "severity": "low",
+                },
+                {
+                    "uuid": "low-2",
+                    "displayName": "collector failure on worker",
+                    "description": "ESET collection failed",
+                    "severity": "medium",
+                },
+            ]
+        ),
+        approval_repository=FakeApprovalRepository(),
+        collection_run_repository=runs,
+        notification_builder=SanitizedIncidentNotificationBuilder(Sanitizer("test-secret")),
+        notification_repository=FakeNotificationRepository(),
+        notifier=notifier,
+        analyzer=analyzer,  # type: ignore[arg-type]
+    )
+
+    result = await use_case.execute(limit=10)
+
+    first_notification = str(notifier.payloads[0])
+    second_notification = str(notifier.payloads[1])
+    assert result.collected_count == 2
+    assert result.notified_count == 2
+    assert result.skipped_count == 0
+    assert runs.saved_count == 1
+    assert runs.failure_message is None
+    assert [incident.external_id for incident in analyzer.incidents] == ["low-1", "low-2"]
+    assert "Analysis Summary" not in first_notification
+    assert "AI analysis is not yet attached" in first_notification
+    assert "Analysis Summary" in second_notification
+    assert "RAG evidence indicates collector failure handling." in second_notification
+
+    [record] = [
+        record
+        for record in caplog.records
+        if record.message == "Incident analysis failed; sending notification without analysis"
+    ]
+    assert record.incident_id == "low-1"
+    assert record.exc_info is not None
+    assert "secret incident title" not in record.getMessage()
+    assert "secret incident summary" not in record.getMessage()
 
 
 @pytest.mark.asyncio
@@ -353,6 +433,26 @@ async def test_collect_and_notify_records_failure_and_reraises() -> None:
     with pytest.raises(TimeoutError):
         await use_case.execute(limit=10)
 
+    assert runs.failure_message == "TimeoutError: ESET request timed out"
+
+
+@pytest.mark.asyncio
+async def test_collect_and_notify_source_iterator_failure_still_records_failure() -> None:
+    runs = FakeCollectionRunRepository()
+    use_case = CollectAndNotifyIncidents(
+        incident_source=FailingIncidentSource(),
+        approval_repository=FakeApprovalRepository(),
+        collection_run_repository=runs,
+        notification_builder=SanitizedIncidentNotificationBuilder(Sanitizer("test-secret")),
+        notification_repository=FakeNotificationRepository(),
+        notifier=FakeNotifier(),
+        analyzer=FakeAnalyzer(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(TimeoutError):
+        await use_case.execute(limit=10)
+
+    assert runs.saved_count == 0
     assert runs.failure_message == "TimeoutError: ESET request timed out"
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import suppress
 
 from eset_incident_ai.application.dto.collection_result import IncidentCollectionResult
@@ -17,6 +18,8 @@ from eset_incident_ai.application.use_cases.analyze_incident import AnalyzeIncid
 from eset_incident_ai.domain.entities.incident import Incident
 from eset_incident_ai.domain.enums.severity import Severity
 from eset_incident_ai.infrastructure.discord.message_builder import build_idempotency_key
+
+logger = logging.getLogger(__name__)
 
 
 class CollectAndNotifyIncidents:
@@ -90,10 +93,20 @@ class CollectAndNotifyIncidents:
                     continue
                 analysis = None
                 if self._analyzer is not None:
-                    analysis = await self._analyzer.execute(
-                        incident=self._to_domain_incident(incident, severity),
-                        tenant_scope="default",
-                    )
+                    try:
+                        analysis = await self._analyzer.execute(
+                            incident=self._to_domain_incident(incident, severity),
+                            tenant_scope="default",
+                        )
+                    except Exception:
+                        incident_id = str(
+                            incident.get("uuid") or incident.get("displayName") or "unknown"
+                        )
+                        logger.warning(
+                            "Incident analysis failed; sending notification without analysis",
+                            extra={"incident_id": incident_id},
+                            exc_info=True,
+                        )
                 await self._notifier.send(self._notification_builder.build(incident, analysis))
                 await self._notification_repository.mark_delivered(
                     idempotency_key=idempotency_key,
