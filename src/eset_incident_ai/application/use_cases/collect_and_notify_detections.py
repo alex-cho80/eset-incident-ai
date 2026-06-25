@@ -116,14 +116,6 @@ class CollectAndNotifyDetections:
 
                 processed_count += 1
                 severity = self._notification_builder.severity(detection)
-                if severity in {Severity.HIGH, Severity.CRITICAL}:
-                    await self._approval_repository.save_pending(
-                        detection=detection,
-                        severity=severity.value,
-                    )
-                    pending_approval_count += 1
-                    continue
-
                 idempotency_key = self._idempotency_key(detection)
                 if await self._notification_repository.was_delivered(idempotency_key):
                     duplicate_skipped_count += 1

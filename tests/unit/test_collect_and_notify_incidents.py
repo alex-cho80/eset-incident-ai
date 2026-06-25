@@ -168,7 +168,7 @@ class FailingAnalyzer:
 
 
 @pytest.mark.asyncio
-async def test_collect_and_notify_sends_only_low_and_medium() -> None:
+async def test_collect_and_notify_sends_all_severities() -> None:
     notifier = FakeNotifier()
     approvals = FakeApprovalRepository()
     runs = FakeCollectionRunRepository()
@@ -189,15 +189,15 @@ async def test_collect_and_notify_sends_only_low_and_medium() -> None:
     result = await use_case.execute(limit=10)
 
     assert result.collected_count == 2
-    assert result.notified_count == 1
-    assert result.pending_approval_count == 1
-    assert len(approvals.pending) == 1
-    assert len(notifier.payloads) == 1
+    assert result.notified_count == 2
+    assert result.pending_approval_count == 0
+    assert approvals.pending == []
+    assert len(notifier.payloads) == 2
     assert runs.saved_count == 1
 
 
 @pytest.mark.asyncio
-async def test_collect_and_notify_routes_real_eset_high_severity_to_pending_approval() -> None:
+async def test_collect_and_notify_routes_real_eset_high_severity_to_notification() -> None:
     notifier = FakeNotifier()
     approvals = FakeApprovalRepository()
     use_case = CollectAndNotifyIncidents(
@@ -220,19 +220,40 @@ async def test_collect_and_notify_routes_real_eset_high_severity_to_pending_appr
     result = await use_case.execute(limit=10)
 
     assert result.collected_count == 1
-    assert result.notified_count == 0
-    assert result.pending_approval_count == 1
-    assert approvals.pending == [
-        {
-            "incident": {
-                "uuid": "high-1",
-                "displayName": "high incident",
-                "severity": "INCIDENT_SEVERITY_LEVEL_HIGH",
-            },
-            "severity": "high",
-        }
-    ]
-    assert notifier.payloads == []
+    assert result.notified_count == 1
+    assert result.pending_approval_count == 0
+    assert approvals.pending == []
+    assert len(notifier.payloads) == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_and_notify_routes_critical_severity_to_notification() -> None:
+    notifier = FakeNotifier()
+    approvals = FakeApprovalRepository()
+    use_case = CollectAndNotifyIncidents(
+        incident_source=FakeIncidentSource(
+            [
+                {
+                    "uuid": "critical-1",
+                    "displayName": "critical incident",
+                    "severity": "critical",
+                }
+            ]
+        ),
+        approval_repository=approvals,
+        collection_run_repository=FakeCollectionRunRepository(),
+        notification_builder=SanitizedIncidentNotificationBuilder(Sanitizer("test-secret")),
+        notification_repository=FakeNotificationRepository(),
+        notifier=notifier,
+    )
+
+    result = await use_case.execute(limit=10)
+
+    assert result.collected_count == 1
+    assert result.notified_count == 1
+    assert result.pending_approval_count == 0
+    assert approvals.pending == []
+    assert len(notifier.payloads) == 1
 
 
 @pytest.mark.asyncio

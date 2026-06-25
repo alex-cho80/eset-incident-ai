@@ -78,41 +78,34 @@ class CollectAndNotifyIncidents:
             observed_keys.update(str(key) for key in incident.keys())
 
             severity = self._notification_builder.severity(incident)
-            if severity in {Severity.HIGH, Severity.CRITICAL}:
-                await self._approval_repository.save_pending(
-                    incident=incident,
-                    severity=severity.value,
-                )
-                pending_approval_count += 1
-            else:
-                idempotency_key = self._idempotency_key(incident)
-                if await self._notification_repository.was_delivered(idempotency_key):
-                    duplicate_skipped_count += 1
-                    if collected_count >= limit:
-                        break
-                    continue
-                analysis = None
-                if self._analyzer is not None:
-                    try:
-                        analysis = await self._analyzer.execute(
-                            incident=self._to_domain_incident(incident, severity),
-                            tenant_scope="default",
-                        )
-                    except Exception:
-                        incident_id = str(
-                            incident.get("uuid") or incident.get("displayName") or "unknown"
-                        )
-                        logger.warning(
-                            "Incident analysis failed; sending notification without analysis",
-                            extra={"incident_id": incident_id},
-                            exc_info=True,
-                        )
-                await self._notifier.send(self._notification_builder.build(incident, analysis))
-                await self._notification_repository.mark_delivered(
-                    idempotency_key=idempotency_key,
-                    destination=self._destination,
-                )
-                notified_count += 1
+            idempotency_key = self._idempotency_key(incident)
+            if await self._notification_repository.was_delivered(idempotency_key):
+                duplicate_skipped_count += 1
+                if collected_count >= limit:
+                    break
+                continue
+            analysis = None
+            if self._analyzer is not None:
+                try:
+                    analysis = await self._analyzer.execute(
+                        incident=self._to_domain_incident(incident, severity),
+                        tenant_scope="default",
+                    )
+                except Exception:
+                    incident_id = str(
+                        incident.get("uuid") or incident.get("displayName") or "unknown"
+                    )
+                    logger.warning(
+                        "Incident analysis failed; sending notification without analysis",
+                        extra={"incident_id": incident_id},
+                        exc_info=True,
+                    )
+            await self._notifier.send(self._notification_builder.build(incident, analysis))
+            await self._notification_repository.mark_delivered(
+                idempotency_key=idempotency_key,
+                destination=self._destination,
+            )
+            notified_count += 1
 
             if collected_count >= limit:
                 break

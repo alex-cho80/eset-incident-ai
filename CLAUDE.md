@@ -36,8 +36,8 @@ The domain layer must not import:
 - Never send raw usernames, email addresses, hostnames, IP addresses,
   tokens or file paths to Discord without policy approval.
 - LLM output is advisory and cannot directly execute endpoint actions.
-- High and critical incidents require human approval before notification
-  or remediation.
+- All incidents/detections regardless of severity are auto-analyzed and
+  auto-notified; there is no pre-notification human-approval gate.
 
 # Review Output
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -301,10 +300,10 @@ async def test_collect_detections_processes_only_post_cutoff_records() -> None:
     )
 
     assert result.skipped_count == 1
-    assert result.notified_count == 1
-    assert result.pending_approval_count == 1
-    assert len(notifier.payloads) == 1
-    assert approvals.pending[0]["severity"] == "high"
+    assert result.notified_count == 2
+    assert result.pending_approval_count == 0
+    assert len(notifier.payloads) == 2
+    assert approvals.pending == []
 
 
 @pytest.mark.asyncio
@@ -394,7 +393,7 @@ async def test_collect_detections_stops_at_page_cap_and_persists_cursor() -> Non
 
 
 @pytest.mark.asyncio
-async def test_collect_detections_routes_high_to_approval_and_low_to_notify() -> None:
+async def test_collect_detections_routes_high_and_low_to_notify() -> None:
     source = FakeDetectionSource(
         [
             DetectionPage(
@@ -417,11 +416,11 @@ async def test_collect_detections_routes_high_to_approval_and_low_to_notify() ->
         backfill_window_days=30,
     )
 
-    assert result.pending_approval_count == 1
-    assert result.notified_count == 1
-    assert approvals.pending[0]["detection"]["uuid"] == "high"
-    assert len(notifier.payloads) == 1
-    assert len(notifications.marked) == 1
+    assert result.pending_approval_count == 0
+    assert result.notified_count == 2
+    assert approvals.pending == []
+    assert len(notifier.payloads) == 2
+    assert len(notifications.marked) == 2
 
 
 @pytest.mark.asyncio
@@ -481,7 +480,7 @@ async def test_collect_detections_attaches_analysis_for_low_and_medium() -> None
 
 
 @pytest.mark.asyncio
-async def test_collect_detections_never_analyzes_high_or_critical() -> None:
+async def test_collect_detections_analyzes_high_and_critical() -> None:
     source = FakeDetectionSource(
         [
             DetectionPage(
@@ -493,7 +492,7 @@ async def test_collect_detections_never_analyzes_high_or_critical() -> None:
             )
         ]
     )
-    analyzer = type("Analyzer", (), {"execute": AsyncMock(return_value=_analysis_result())})()
+    analyzer = FakeAnalyzer()
     use_case, approvals, _, notifier = _use_case(
         source,
         FakeDetectionCollectionRunRepository(),
@@ -507,10 +506,14 @@ async def test_collect_detections_never_analyzes_high_or_critical() -> None:
         backfill_window_days=30,
     )
 
-    assert result.pending_approval_count == 2
-    assert len(approvals.pending) == 2
-    assert notifier.payloads == []
-    analyzer.execute.assert_not_called()
+    assert result.pending_approval_count == 0
+    assert result.notified_count == 2
+    assert approvals.pending == []
+    assert len(notifier.payloads) == 2
+    assert [incident.severity for incident in analyzer.incidents] == [
+        Severity.HIGH,
+        Severity.CRITICAL,
+    ]
 
 
 @pytest.mark.asyncio
