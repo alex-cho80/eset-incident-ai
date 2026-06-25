@@ -116,10 +116,42 @@ Result: no output.
 ## Deviations
 
 - No functional deviation from the implementation spec.
-- Manual/operational acceptance items requiring a real compose-managed Ollama runtime were not
-  performed in this implementation pass because the task explicitly prohibited `docker compose up`,
-  build, deploy, restart, or other container lifecycle operations. Only `docker compose config
-  --quiet` was run.
 - Verification commands were run with `UV_CACHE_DIR=/tmp/uv-cache` because the default uv cache
   path under `/home/devops/.cache/uv` is read-only in this sandbox. The command bodies and results
   are otherwise the requested gate.
+
+## Live Deployment Verification (claude, 2026-06-25, after implementation/review approval)
+
+Performed after this report's implementation pass and after `architecture-review.md`/
+`security-gate-report.md` approval, as a separate deploy step (project-owner confirmed at each
+stage):
+
+1. `docker compose up -d --build api worker scheduler ollama` — all 5 production containers
+   (`api`/`worker`/`scheduler`/`postgres`/`redis`) plus the new `ollama` service came up healthy.
+2. `docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M` — succeeded, 4.7 GB pulled
+   into the `ollama_data` volume.
+3. **First live call used the wrong backend silently-by-design**: the live `.env` (not
+   `.env.example`) still had `LLM_PROVIDER=anthropic` from before this migration, so
+   `_get_llm_gateway()` correctly fell back to `LocalAnalysisGateway` (the deterministic stub) per
+   AC8 — confirmed by the response's `executive_summary` matching `local_gateway.py`'s f-string
+   exactly. This is not a code defect; it is `.env` having never been updated for this task (only
+   `.env.example` is part of the diff). Fixed by editing the live `.env`: `LLM_PROVIDER=ollama`,
+   added `OLLAMA_BASE_URL`/`OLLAMA_MODEL`/`OLLAMA_KEEP_ALIVE`, raised `LLM_TIMEOUT_SECONDS` to
+   `240`, and removed the now-dead `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` lines (project-owner
+   confirmed both the fix and the key removal). Re-ran `docker compose up -d --build api worker
+   scheduler` so the new `.env` was actually picked up (per the known "`restart` doesn't reread
+   `.env`" finding).
+4. Second live call (`POST /api/v1/analyses/run`, real incident through the real `AnalyzeIncident`
+   → `OllamaGateway` → `http://ollama:11434/api/generate` path, not the ad-hoc benchmarking setup
+   from the feasibility spike): **200 OK in 182.5 s** (vs. 147.6 s in the spike — within reasonable
+   variance, no investigation triggered per AC30's threshold). Schema-valid JSON, fluent Korean
+   natural-language fields, `priority` enum literals correctly left in English, and correct
+   evidence-grounding behavior — no RAG evidence was retrieved for this synthetic test incident, so
+   every claim correctly cited the `no-supporting-evidence` sentinel rather than a fabricated ID.
+5. All 5 production containers stayed healthy throughout both calls. Host memory after the second
+   call: 8.9 GB available, swap at 1.0 GB (model unloads per `keep_alive=0s` after each call) — no
+   sign of the resource pressure seen in the rejected 14B feasibility test.
+
+This satisfies `acceptance-criteria.md` AC28 (real compose-managed run, schema-valid Korean output),
+AC29 (production containers stayed healthy and available, checked before/during/after), and AC30
+(latency recorded and within reasonable variance of the spike figure).
