@@ -19,6 +19,8 @@ from eset_incident_ai.application.use_cases.collect_and_notify_incidents import 
 from eset_incident_ai.application.use_cases.list_collection_runs import ListCollectionRuns
 from eset_incident_ai.application.use_cases.list_pending_approvals import ListPendingApprovals
 from eset_incident_ai.application.use_cases.review_pending_approval import ReviewPendingApproval
+from eset_incident_ai.infrastructure.llm.local_gateway import LocalAnalysisGateway
+from eset_incident_ai.infrastructure.llm.ollama_gateway import OllamaGateway
 
 
 def test_get_collect_and_notify_incidents_uses_settings(monkeypatch) -> None:
@@ -27,6 +29,8 @@ def test_get_collect_and_notify_incidents_uses_settings(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
     monkeypatch.setenv("ESET_ACCESS_TOKEN", "token-value")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/db")
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen-test")
 
     use_case = get_collect_and_notify_incidents()
 
@@ -66,6 +70,48 @@ def test_get_analyze_incident_uses_settings(monkeypatch) -> None:
     use_case = get_analyze_incident()
 
     assert isinstance(use_case, AnalyzeIncident)
+    get_settings.cache_clear()
+
+
+def test_default_ollama_provider_wires_public_factories(monkeypatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("SANITIZER_HMAC_SECRET", "test-secret")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
+    monkeypatch.setenv("ESET_ACCESS_TOKEN", "token-value")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/db")
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen-test")
+
+    analyze = get_analyze_incident()
+    incident_collection = get_collect_and_notify_incidents()
+    detection_collection = get_collect_and_notify_detections()
+
+    assert isinstance(analyze._llm_gateway, OllamaGateway)  # noqa: SLF001
+    assert isinstance(incident_collection._analyzer._llm_gateway, OllamaGateway)  # noqa: SLF001
+    assert isinstance(detection_collection._analyzer._llm_gateway, OllamaGateway)  # noqa: SLF001
+    get_settings.cache_clear()
+
+
+def test_cleared_ollama_model_wires_local_gateway_in_public_factories(monkeypatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("SANITIZER_HMAC_SECRET", "test-secret")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
+    monkeypatch.setenv("ESET_ACCESS_TOKEN", "token-value")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/db")
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "")
+
+    analyze = get_analyze_incident()
+    incident_collection = get_collect_and_notify_incidents()
+    detection_collection = get_collect_and_notify_detections()
+
+    assert isinstance(analyze._llm_gateway, LocalAnalysisGateway)  # noqa: SLF001
+    assert isinstance(  # noqa: SLF001
+        incident_collection._analyzer._llm_gateway, LocalAnalysisGateway
+    )
+    assert isinstance(  # noqa: SLF001
+        detection_collection._analyzer._llm_gateway, LocalAnalysisGateway
+    )
     get_settings.cache_clear()
 
 

@@ -1,6 +1,6 @@
 # ESET Incident AI Project Status
 
-Updated: 2026-06-23 (Anthropic LLM gateway live-verified and pushed)
+Updated: 2026-06-25 (Ollama local LLM gateway implemented)
 
 ## Current State
 
@@ -28,13 +28,13 @@ Implemented capabilities:
 - RAG evidence based analysis API.
 - Automatic Low and Medium Discord notifications now include RAG analysis summary,
   confidence, evidence coverage, evidence IDs, and immediate action.
-- `AnthropicGateway` as a real LLM analysis backend: transport retries on connection/timeout/
-  429/5xx errors, one retry on schema validation failure, fabricated evidence IDs rejected and
-  retried, prompt-injection detections appended to `limitations`, sanitized title/summary used
-  in the prompt.
-- `_get_llm_gateway()` provider-selection factory: selects `AnthropicGateway` only when
-  `LLM_PROVIDER=anthropic` and both `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` are set; falls
-  back to `LocalAnalysisGateway` silently otherwise.
+- `OllamaGateway` as the real local LLM analysis backend: calls the in-network Ollama
+  `/api/generate` endpoint with JSON constrained output, retries connection/timeout errors,
+  retries once on schema validation failure, rejects fabricated evidence IDs, appends
+  prompt-injection detections to `limitations`, and uses sanitized title/summary in the prompt.
+- `_get_llm_gateway()` provider-selection factory: selects `OllamaGateway` when
+  `LLM_PROVIDER=ollama` and `OLLAMA_MODEL` is set; falls back to `LocalAnalysisGateway` when the
+  model is explicitly cleared or another provider is configured.
 - IP address pseudonymization removed from the shared sanitizer by explicit project-owner
   decision. Raw private and public IPs now flow to the Discord notification builder and the LLM
   gateway prompt.
@@ -54,9 +54,15 @@ Verified manually:
 - Knowledge search returns indexed evidence chunks.
 - Analysis API returns root cause, remediation, confidence, evidence coverage, and evidence IDs.
 - RAG evidence is attached to analysis after knowledge ingest.
-- `POST /api/v1/analyses/run` verified against the live Anthropic API (model `claude-sonnet-4-6`,
-  prompt `config/prompts/incident_analysis.jinja2`) with a real `ANTHROPIC_API_KEY` configured,
-  returning `200 OK` with a schema-valid root cause and remediation payload.
+- Previous hosted-provider live verification has been superseded by the local Ollama gateway.
+  Before production use after first compose startup, pull the pinned model once:
+
+```bash
+sudo docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M
+```
+
+After the model is pulled, manually verify `POST /api/v1/analyses/run` through the compose network
+using `OLLAMA_BASE_URL=http://ollama:11434` and confirm the response is schema-valid.
 
 Three bugs were found and fixed only by this live verification (spec review alone did not
 surface them):
@@ -65,7 +71,7 @@ surface them):
    existing container with its old environment. Changing `.env` or code requires
    `sudo docker compose up -d --build <service>`.
 2. `LLM_TIMEOUT_SECONDS=30` was too short for the combined root-cause + remediation call (up to
-   4096 tokens); raised the default to `90` in `settings/config.py`, `.env`, and `.env.example`.
+   4096 tokens); it was previously raised to `90` and is now `240` for the CPU-bound local model.
 3. The model sometimes wrapped JSON responses in markdown code fences, breaking `json.loads`;
    `structured_output.py` now strips code fences before parsing (`_strip_code_fence`).
 4. Evidence-id validation rejected the `no-supporting-evidence` sentinel whenever any evidence
@@ -77,7 +83,8 @@ surface them):
 Start or refresh containers:
 
 ```bash
-sudo docker compose up -d --build --force-recreate api worker scheduler redis postgres
+sudo docker compose up -d --build --force-recreate api worker scheduler redis postgres ollama
+sudo docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M
 ```
 
 Health and readiness:
@@ -156,12 +163,13 @@ docker compose config --quiet
 
 Most recent known result:
 
-- Tests: `101 passed`
-- Coverage: `88.08%`
-- ruff format / ruff check: clean
-- mypy: no issues (109 source files)
-- Bandit: no issues
-- pip-audit: no known vulnerabilities
+- Tests: `179 passed`
+- Coverage: `87.29%`
+- ruff format: `169 files already formatted`
+- ruff check: clean
+- mypy: no issues in `122 source files`
+- Bandit: no issues, `3888` lines of code scanned
+- pip-audit: no known vulnerabilities found
 - `docker compose config --quiet`: clean
 
 ## Security Notes
@@ -181,10 +189,10 @@ Most recent known result:
   accept the risk on that channel for now. Treat this as still open before pointing any new
   Discord channel at this code as-is.
 - **Known open gap / project owner decision (2026-06-24):** the project owner explicitly decided
-  to stop masking IP addresses in both the Discord notification and the Anthropic LLM prompt
-  paths; both use the same shared `Sanitizer`. Raw private and public IP addresses now reach
-  Discord and Anthropic's API. Email addresses, Windows paths, and `token`/`secret`/`password`/
-  `webhook` key-value pairs are still masked.
+  to stop masking IP addresses in both the Discord notification and LLM prompt paths; both use the
+  same shared `Sanitizer`. Raw private and public IP addresses now reach Discord and the local
+  Ollama prompt. Email addresses, Windows paths, and `token`/`secret`/`password`/`webhook`
+  key-value pairs are still masked.
 
 ## GitHub Push
 
@@ -201,13 +209,15 @@ Commit history so far:
 
 - `a1f8f89` Initial commit
 - `d7c430a` Implement ESET incident AI operational flow
-- `9941b11` Add Anthropic LLM gateway with provider-selection factory
+- `9941b11` Add the first real LLM gateway with provider-selection factory
 
 ## Remaining Future Enhancements
 
 - Expand ESET evidence collection with detections, devices, timelines, and asset context.
 - Add more runbooks, ESET guides, internal policies, and MITRE content to `knowledge/`.
 - Evaluate analysis quality with curated datasets.
+- Evaluate whether the Incident-vs-Detection analyzer-exception asymmetry should remain under a
+  local, single-instance LLM backend.
 - Close the sanitizer hostname/employee-identifier gap described above (deferred by user choice,
   not forgotten).
 

@@ -5,7 +5,7 @@ from eset_incident_ai.settings.config import Settings
 
 
 def test_detection_settings_defaults_match_spec() -> None:
-    settings = Settings(sanitizer_hmac_secret="test-secret")  # noqa: S106
+    settings = Settings(sanitizer_hmac_secret="test-secret", _env_file=None)  # noqa: S106
 
     assert settings.detection_notify_limit == 500
     assert settings.detection_max_pages_per_run == 1000

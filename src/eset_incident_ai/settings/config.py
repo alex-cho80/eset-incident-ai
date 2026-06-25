@@ -37,11 +37,12 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
     discord_enabled: bool = False
 
-    llm_provider: str = "anthropic"
+    llm_provider: str = "ollama"
     llm_model: str = ""
-    anthropic_api_key: str = ""
-    anthropic_model: str = ""
-    llm_timeout_seconds: float = 90.0
+    ollama_base_url: str = "http://ollama:11434"
+    ollama_model: str = "qwen2.5:7b-instruct-q4_K_M"
+    ollama_keep_alive: str = "0s"
+    llm_timeout_seconds: float = 240.0
     llm_max_retries: int = 2
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"

@@ -35,8 +35,8 @@ from eset_incident_ai.infrastructure.discord.webhook_client import DiscordWebhoo
 from eset_incident_ai.infrastructure.eset.auth_client import EsetAuthClient
 from eset_incident_ai.infrastructure.eset.detection_client import EsetDetectionClient
 from eset_incident_ai.infrastructure.eset.incident_client import EsetIncidentClient
-from eset_incident_ai.infrastructure.llm.anthropic_gateway import AnthropicGateway
 from eset_incident_ai.infrastructure.llm.local_gateway import LocalAnalysisGateway
+from eset_incident_ai.infrastructure.llm.ollama_gateway import OllamaGateway
 from eset_incident_ai.infrastructure.observability.readiness import ServiceReadinessProbe
 from eset_incident_ai.infrastructure.persistence.approval_repository import (
     PostgresApprovalRepository,
@@ -69,14 +69,11 @@ class DisabledNotifier:
 
 
 def _get_llm_gateway(settings: Settings) -> LlmGateway:
-    if (
-        settings.llm_provider == "anthropic"
-        and settings.anthropic_api_key
-        and settings.anthropic_model
-    ):
-        return AnthropicGateway(
-            api_key=settings.anthropic_api_key,
-            model=settings.anthropic_model,
+    if settings.llm_provider == "ollama" and settings.ollama_model:
+        return OllamaGateway(
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_model,
+            keep_alive=settings.ollama_keep_alive,
             sanitizer=Sanitizer(settings.sanitizer_hmac_secret),
             timeout_seconds=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,

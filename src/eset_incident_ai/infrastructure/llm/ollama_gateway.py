@@ -2,18 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
-from anthropic import (
-    APIConnectionError,
-    APITimeoutError,
-    AsyncAnthropic,
-    InternalServerError,
-    OverloadedError,
-    RateLimitError,
-)
+import httpx
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -36,63 +28,41 @@ _INJECTION_NOTICE = (
     "Automated prompt-injection check flagged suspicious instructions embedded in the "
     "incident text; those instructions were not followed."
 )
-# Transport/availability errors are worth retrying; 4xx client errors (bad request, auth,
-# validation) will not succeed on retry and should surface immediately.
-_RETRYABLE_ANTHROPIC_ERRORS = (
-    APIConnectionError,
-    APITimeoutError,
-    RateLimitError,
-    InternalServerError,
-    OverloadedError,
+_RETRYABLE_OLLAMA_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
 )
 
 
-class _MessageBlock(Protocol):
-    type: str
-    text: str
+class _AsyncHttpClient(Protocol):
+    async def post(self, url: str, *, json: dict[str, object]) -> httpx.Response: ...
 
 
-class _MessagesResponse(Protocol):
-    content: Sequence[_MessageBlock]
-
-
-class _MessagesApi(Protocol):
-    async def create(
-        self, *, model: str, max_tokens: int, messages: list[dict[str, str]]
-    ) -> _MessagesResponse: ...
-
-
-class _AnthropicClient(Protocol):
-    messages: _MessagesApi
-
-
-class AnthropicGateway:
+class OllamaGateway:
     def __init__(
         self,
         *,
-        api_key: str,
+        base_url: str,
         model: str,
+        keep_alive: str,
         sanitizer: Sanitizer,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float = 240.0,
         max_retries: int = 2,
         injection_filter: PromptInjectionFilter | None = None,
-        client: _AnthropicClient | None = None,
+        client: _AsyncHttpClient | None = None,
     ) -> None:
-        if not api_key:
-            raise ValueError("api_key is required")
+        if not base_url:
+            raise ValueError("base_url is required")
         if not model:
             raise ValueError("model is required")
+        self._base_url = base_url.rstrip("/")
         self._model = model
+        self._keep_alive = keep_alive
         self._sanitizer = sanitizer
         self._injection_filter = injection_filter or PromptInjectionFilter()
         self._max_retries = max_retries
-        # The SDK's own retry loop is disabled (max_retries=0): tenacity in
-        # _call_with_retry is the single source of retry/backoff policy, so the two
-        # mechanisms don't compound into more attempts than llm_max_retries allows.
-        self._client: _AnthropicClient = client or cast(
-            "_AnthropicClient",
-            AsyncAnthropic(api_key=api_key, timeout=timeout_seconds, max_retries=0),
-        )
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._template = Environment(
             loader=FileSystemLoader(str(_PROMPT_DIR)),
             # select_autoescape()'s default extension list (html/htm/xml) does not include
@@ -125,7 +95,7 @@ class AnthropicGateway:
             result = self._parse_and_validate(raw_text, valid_evidence_ids)
         except StructuredOutputError as exc:
             logger.warning(
-                "AnthropicGateway validation failed, retrying once: %s | raw_text=%r",
+                "OllamaGateway validation failed, retrying once: %s | raw_text=%r",
                 exc,
                 raw_text[:2000],
             )
@@ -135,7 +105,7 @@ class AnthropicGateway:
                 result = self._parse_and_validate(raw_text, valid_evidence_ids)
             except StructuredOutputError as exc2:
                 logger.warning(
-                    "AnthropicGateway validation failed again after retry: %s | raw_text=%r",
+                    "OllamaGateway validation failed again after retry: %s | raw_text=%r",
                     exc2,
                     raw_text[:2000],
                 )
@@ -177,14 +147,24 @@ class AnthropicGateway:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(self._max_retries + 1),
             wait=wait_exponential(multiplier=1, max=10),
-            retry=retry_if_exception_type(_RETRYABLE_ANTHROPIC_ERRORS),
+            retry=retry_if_exception_type(_RETRYABLE_OLLAMA_ERRORS),
             reraise=True,
         ):
             with attempt:
-                response = await self._client.messages.create(
-                    model=self._model,
-                    max_tokens=4096,
-                    messages=[{"role": "user", "content": prompt}],
+                response = await self._client.post(
+                    f"{self._base_url}/api/generate",
+                    json={
+                        "model": self._model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "format": "json",
+                        "keep_alive": self._keep_alive,
+                    },
                 )
-                return "".join(block.text for block in response.content if block.type == "text")
+                response.raise_for_status()
+                payload = response.json()
+                generated_text = payload.get("response")
+                if not isinstance(generated_text, str):
+                    raise StructuredOutputError("Ollama response did not include response text")
+                return generated_text
         raise AssertionError("unreachable: AsyncRetrying always returns or raises")
