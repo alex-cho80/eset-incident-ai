@@ -16,7 +16,6 @@ from eset_incident_ai.infrastructure.discord.detection_notification_builder impo
 from eset_incident_ai.infrastructure.discord.message_builder import build_idempotency_key
 from eset_incident_ai.infrastructure.discord.webhook_client import DiscordWebhookClient
 from eset_incident_ai.infrastructure.llm.local_gateway import LocalAnalysisGateway
-from eset_incident_ai.infrastructure.llm.ollama_gateway import OllamaGateway
 from eset_incident_ai.infrastructure.persistence.detection_approval_repository import (
     PostgresDetectionApprovalRepository,
 )
@@ -89,7 +88,7 @@ async def run(*, limit: int, dry_run: bool = False) -> None:
     notification_repository = PostgresNotificationRepository(settings.database_url)
     notification_builder = SanitizedDetectionNotificationBuilder(sanitizer)
     notifier = DiscordWebhookClient(webhook_url=settings.discord_webhook_url)
-    analyzer = _build_analyzer(settings, sanitizer)
+    analyzer = _build_analyzer(settings)
 
     for approval in approvals:
         await _process_approval(
@@ -111,21 +110,10 @@ def _validate_settings(settings: Settings) -> None:
         raise SystemExit("SANITIZER_HMAC_SECRET is empty")
 
 
-def _build_analyzer(settings: Settings, sanitizer: Sanitizer) -> AnalyzeIncident:
-    if settings.llm_provider == "ollama" and settings.ollama_model:
-        llm_gateway = OllamaGateway(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_model,
-            keep_alive=settings.ollama_keep_alive,
-            sanitizer=sanitizer,
-            timeout_seconds=settings.llm_timeout_seconds,
-            max_retries=settings.llm_max_retries,
-        )
-    else:
-        llm_gateway = LocalAnalysisGateway()
+def _build_analyzer(settings: Settings) -> AnalyzeIncident:
     return AnalyzeIncident(
         vector_repository=PgVectorRepository(settings.database_url),
-        llm_gateway=llm_gateway,
+        llm_gateway=LocalAnalysisGateway(),
     )
 
 

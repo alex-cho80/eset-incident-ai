@@ -168,10 +168,11 @@ class FailingAnalyzer:
 
 
 @pytest.mark.asyncio
-async def test_collect_and_notify_sends_all_severities() -> None:
+async def test_collect_and_notify_filters_low_severity_by_default() -> None:
     notifier = FakeNotifier()
     approvals = FakeApprovalRepository()
     runs = FakeCollectionRunRepository()
+    notifications = FakeNotificationRepository()
     use_case = CollectAndNotifyIncidents(
         incident_source=FakeIncidentSource(
             [
@@ -182,18 +183,45 @@ async def test_collect_and_notify_sends_all_severities() -> None:
         approval_repository=approvals,
         collection_run_repository=runs,
         notification_builder=SanitizedIncidentNotificationBuilder(Sanitizer("test-secret")),
-        notification_repository=FakeNotificationRepository(),
+        notification_repository=notifications,
         notifier=notifier,
     )
 
     result = await use_case.execute(limit=10)
 
     assert result.collected_count == 2
-    assert result.notified_count == 2
+    assert result.notified_count == 1
+    assert result.skipped_count == 1
     assert result.pending_approval_count == 0
     assert approvals.pending == []
-    assert len(notifier.payloads) == 2
+    assert len(notifier.payloads) == 1
+    assert "high incident" in str(notifier.payloads[0])
+    assert len(notifications.delivered) == 1  # only the high-severity item is idempotency-tracked
     assert runs.saved_count == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_and_notify_honors_custom_min_severity() -> None:
+    notifier = FakeNotifier()
+    use_case = CollectAndNotifyIncidents(
+        incident_source=FakeIncidentSource(
+            [
+                {"uuid": "low-1", "displayName": "low incident", "severity": "low"},
+                {"uuid": "high-1", "displayName": "high incident", "severity": "high"},
+            ]
+        ),
+        approval_repository=FakeApprovalRepository(),
+        collection_run_repository=FakeCollectionRunRepository(),
+        notification_builder=SanitizedIncidentNotificationBuilder(Sanitizer("test-secret")),
+        notification_repository=FakeNotificationRepository(),
+        notifier=notifier,
+        min_severity=Severity.LOW,
+    )
+
+    result = await use_case.execute(limit=10)
+
+    assert result.notified_count == 2
+    assert len(notifier.payloads) == 2
 
 
 @pytest.mark.asyncio
@@ -264,10 +292,10 @@ async def test_collect_and_notify_attaches_analysis_for_notified_incidents() -> 
         incident_source=FakeIncidentSource(
             [
                 {
-                    "uuid": "low-1",
+                    "uuid": "med-1",
                     "displayName": "collector failure on worker",
                     "description": "ESET collection failed",
-                    "severity": "low",
+                    "severity": "medium",
                 }
             ]
         ),
@@ -295,7 +323,7 @@ async def test_collect_and_notify_continues_when_incident_analysis_fails(
 ) -> None:
     notifier = FakeNotifier()
     runs = FakeCollectionRunRepository()
-    analyzer = FailingAnalyzer(failing_external_ids={"low-1"})
+    analyzer = FailingAnalyzer(failing_external_ids={"med-1"})
     caplog.set_level(
         logging.WARNING,
         logger="eset_incident_ai.application.use_cases.collect_and_notify_incidents",
@@ -304,13 +332,13 @@ async def test_collect_and_notify_continues_when_incident_analysis_fails(
         incident_source=FakeIncidentSource(
             [
                 {
-                    "uuid": "low-1",
+                    "uuid": "med-1",
                     "displayName": "secret incident title alice@example.com",
                     "description": "secret incident summary",
-                    "severity": "low",
+                    "severity": "medium",
                 },
                 {
-                    "uuid": "low-2",
+                    "uuid": "med-2",
                     "displayName": "collector failure on worker",
                     "description": "ESET collection failed",
                     "severity": "medium",
@@ -334,7 +362,7 @@ async def test_collect_and_notify_continues_when_incident_analysis_fails(
     assert result.skipped_count == 0
     assert runs.saved_count == 1
     assert runs.failure_message is None
-    assert [incident.external_id for incident in analyzer.incidents] == ["low-1", "low-2"]
+    assert [incident.external_id for incident in analyzer.incidents] == ["med-1", "med-2"]
     assert "Analysis Summary" not in first_notification
     assert "AI analysis is not yet attached" in first_notification
     assert "Analysis Summary" in second_notification
@@ -345,7 +373,7 @@ async def test_collect_and_notify_continues_when_incident_analysis_fails(
         for record in caplog.records
         if record.message == "Incident analysis failed; sending notification without analysis"
     ]
-    assert record.incident_id == "low-1"
+    assert record.incident_id == "med-1"
     assert record.exc_info is not None
     assert "secret incident title" not in record.getMessage()
     assert "secret incident summary" not in record.getMessage()
@@ -357,8 +385,8 @@ async def test_collect_and_notify_stops_at_limit() -> None:
     use_case = CollectAndNotifyIncidents(
         incident_source=FakeIncidentSource(
             [
-                {"uuid": "low-1", "displayName": "first", "severity": "low"},
-                {"uuid": "low-2", "displayName": "second", "severity": "low"},
+                {"uuid": "med-1", "displayName": "first", "severity": "medium"},
+                {"uuid": "med-2", "displayName": "second", "severity": "medium"},
             ]
         ),
         approval_repository=FakeApprovalRepository(),
@@ -383,15 +411,15 @@ async def test_collect_and_notify_skips_duplicates() -> None:
         incident_source=FakeIncidentSource(
             [
                 {
-                    "uuid": "low-1",
+                    "uuid": "med-1",
                     "displayName": "first",
-                    "severity": "low",
+                    "severity": "medium",
                     "updateTime": "2026-06-23T10:00:00Z",
                 },
                 {
-                    "uuid": "low-1",
+                    "uuid": "med-1",
                     "displayName": "first",
-                    "severity": "low",
+                    "severity": "medium",
                     "updateTime": "2026-06-23T10:00:00Z",
                 },
             ]
@@ -414,14 +442,14 @@ async def test_collect_and_notify_skips_duplicates() -> None:
 @pytest.mark.asyncio
 async def test_collect_and_notify_stops_at_duplicate_limit() -> None:
     repository = FakeNotificationRepository()
-    repository.delivered.add(build_idempotency_key("low-1", "2026-06-23T10:00:00Z", "discord"))
+    repository.delivered.add(build_idempotency_key("med-1", "2026-06-23T10:00:00Z", "discord"))
     use_case = CollectAndNotifyIncidents(
         incident_source=FakeIncidentSource(
             [
                 {
-                    "uuid": "low-1",
+                    "uuid": "med-1",
                     "displayName": "first",
-                    "severity": "low",
+                    "severity": "medium",
                     "updateTime": "2026-06-23T10:00:00Z",
                 }
             ]

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from eset_incident_ai.application.ports.llm_gateway import LlmGateway
 from eset_incident_ai.application.ports.notifier import Notifier
 from eset_incident_ai.application.use_cases.analyze_incident import AnalyzeIncident
 from eset_incident_ai.application.use_cases.check_readiness import CheckReadiness
@@ -25,6 +24,7 @@ from eset_incident_ai.application.use_cases.review_pending_detection_approval im
     ReviewPendingDetectionApproval,
 )
 from eset_incident_ai.application.use_cases.search_knowledge import SearchKnowledge
+from eset_incident_ai.domain.enums.severity import Severity
 from eset_incident_ai.infrastructure.discord.detection_notification_builder import (
     SanitizedDetectionNotificationBuilder,
 )
@@ -36,7 +36,6 @@ from eset_incident_ai.infrastructure.eset.auth_client import EsetAuthClient
 from eset_incident_ai.infrastructure.eset.detection_client import EsetDetectionClient
 from eset_incident_ai.infrastructure.eset.incident_client import EsetIncidentClient
 from eset_incident_ai.infrastructure.llm.local_gateway import LocalAnalysisGateway
-from eset_incident_ai.infrastructure.llm.ollama_gateway import OllamaGateway
 from eset_incident_ai.infrastructure.observability.readiness import ServiceReadinessProbe
 from eset_incident_ai.infrastructure.persistence.approval_repository import (
     PostgresApprovalRepository,
@@ -68,19 +67,6 @@ class DisabledNotifier:
         _ = payload
 
 
-def _get_llm_gateway(settings: Settings) -> LlmGateway:
-    if settings.llm_provider == "ollama" and settings.ollama_model:
-        return OllamaGateway(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_model,
-            keep_alive=settings.ollama_keep_alive,
-            sanitizer=Sanitizer(settings.sanitizer_hmac_secret),
-            timeout_seconds=settings.llm_timeout_seconds,
-            max_retries=settings.llm_max_retries,
-        )
-    return LocalAnalysisGateway()
-
-
 def get_check_readiness() -> CheckReadiness:
     settings = get_settings()
     return CheckReadiness(
@@ -95,7 +81,7 @@ def get_analyze_incident() -> AnalyzeIncident:
     settings = get_settings()
     return AnalyzeIncident(
         vector_repository=PgVectorRepository(settings.database_url),
-        llm_gateway=_get_llm_gateway(settings),
+        llm_gateway=LocalAnalysisGateway(),
     )
 
 
@@ -130,10 +116,7 @@ def get_collect_and_notify_incidents() -> CollectAndNotifyIncidents:
         notification_builder=SanitizedIncidentNotificationBuilder(sanitizer),
         notification_repository=PostgresNotificationRepository(settings.database_url),
         notifier=notifier,
-        analyzer=AnalyzeIncident(
-            vector_repository=PgVectorRepository(settings.database_url),
-            llm_gateway=_get_llm_gateway(settings),
-        ),
+        min_severity=Severity.parse(settings.min_notify_severity),
     )
 
 
@@ -168,10 +151,7 @@ def get_collect_and_notify_detections() -> CollectAndNotifyDetections:
         notification_builder=SanitizedDetectionNotificationBuilder(sanitizer),
         notification_repository=PostgresNotificationRepository(settings.database_url),
         notifier=notifier,
-        analyzer=AnalyzeIncident(
-            vector_repository=PgVectorRepository(settings.database_url),
-            llm_gateway=_get_llm_gateway(settings),
-        ),
+        min_severity=Severity.parse(settings.min_notify_severity),
     )
 
 

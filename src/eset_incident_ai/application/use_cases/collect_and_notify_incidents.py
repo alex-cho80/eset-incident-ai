@@ -34,6 +34,7 @@ class CollectAndNotifyIncidents:
         notifier: Notifier,
         analyzer: AnalyzeIncident | None = None,
         destination: str = "discord",
+        min_severity: Severity = Severity.MEDIUM,
     ) -> None:
         self._incident_source = incident_source
         self._approval_repository = approval_repository
@@ -43,6 +44,7 @@ class CollectAndNotifyIncidents:
         self._notifier = notifier
         self._analyzer = analyzer
         self._destination = destination
+        self._min_severity = min_severity
 
     async def execute(
         self,
@@ -78,6 +80,10 @@ class CollectAndNotifyIncidents:
             observed_keys.update(str(key) for key in incident.keys())
 
             severity = self._notification_builder.severity(incident)
+            if not severity.meets_threshold(self._min_severity):
+                if collected_count >= limit:
+                    break
+                continue
             idempotency_key = self._idempotency_key(incident)
             if await self._notification_repository.was_delivered(idempotency_key):
                 duplicate_skipped_count += 1

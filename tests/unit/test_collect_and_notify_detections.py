@@ -164,7 +164,7 @@ class SpyDetectionNotificationBuilder:
 def _detection(
     uuid: str,
     *,
-    severity: str = "SEVERITY_LEVEL_LOW",
+    severity: str = "SEVERITY_LEVEL_MEDIUM",
     occur_time: str = "2026-06-20T00:00:00Z",
 ) -> dict[str, Any]:
     return {
@@ -393,7 +393,7 @@ async def test_collect_detections_stops_at_page_cap_and_persists_cursor() -> Non
 
 
 @pytest.mark.asyncio
-async def test_collect_detections_routes_high_and_low_to_notify() -> None:
+async def test_collect_detections_notifies_high_and_filters_low_by_default() -> None:
     source = FakeDetectionSource(
         [
             DetectionPage(
@@ -417,10 +417,45 @@ async def test_collect_detections_routes_high_and_low_to_notify() -> None:
     )
 
     assert result.pending_approval_count == 0
-    assert result.notified_count == 2
+    assert result.notified_count == 1
+    assert result.skipped_count == 1
     assert approvals.pending == []
-    assert len(notifier.payloads) == 2
-    assert len(notifications.marked) == 2
+    assert len(notifier.payloads) == 1
+    assert len(notifications.marked) == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_detections_honors_custom_min_severity() -> None:
+    source = FakeDetectionSource(
+        [
+            DetectionPage(
+                detections=[
+                    _detection("high", severity="SEVERITY_LEVEL_HIGH"),
+                    _detection("low", severity="SEVERITY_LEVEL_LOW"),
+                ],
+                next_page_token=None,
+            )
+        ]
+    )
+    use_case = CollectAndNotifyDetections(
+        detection_source=source,
+        approval_repository=FakeDetectionApprovalRepository(),
+        collection_run_repository=FakeDetectionCollectionRunRepository(),
+        notification_builder=SanitizedDetectionNotificationBuilder(Sanitizer("test-secret")),
+        notification_repository=FakeNotificationRepository(),
+        notifier=FakeNotifier(),
+        now=datetime(2026, 6, 24, tzinfo=UTC),
+        min_severity=Severity.LOW,
+    )
+
+    result = await use_case.execute(
+        limit=10,
+        page_size=1000,
+        max_pages_per_run=10,
+        backfill_window_days=30,
+    )
+
+    assert result.notified_count == 2
 
 
 @pytest.mark.asyncio
@@ -522,8 +557,8 @@ async def test_collect_detections_analysis_failure_notifies_and_saves_success() 
         [
             DetectionPage(
                 detections=[
-                    _detection("fails", severity="SEVERITY_LEVEL_LOW"),
-                    _detection("works", severity="SEVERITY_LEVEL_LOW"),
+                    _detection("fails", severity="SEVERITY_LEVEL_MEDIUM"),
+                    _detection("works", severity="SEVERITY_LEVEL_MEDIUM"),
                 ],
                 next_page_token=None,
             )

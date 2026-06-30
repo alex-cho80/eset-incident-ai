@@ -20,7 +20,6 @@ from eset_incident_ai.application.use_cases.list_collection_runs import ListColl
 from eset_incident_ai.application.use_cases.list_pending_approvals import ListPendingApprovals
 from eset_incident_ai.application.use_cases.review_pending_approval import ReviewPendingApproval
 from eset_incident_ai.infrastructure.llm.local_gateway import LocalAnalysisGateway
-from eset_incident_ai.infrastructure.llm.ollama_gateway import OllamaGateway
 
 
 def test_get_collect_and_notify_incidents_uses_settings(monkeypatch) -> None:
@@ -29,8 +28,6 @@ def test_get_collect_and_notify_incidents_uses_settings(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
     monkeypatch.setenv("ESET_ACCESS_TOKEN", "token-value")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/db")
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_MODEL", "qwen-test")
 
     use_case = get_collect_and_notify_incidents()
 
@@ -38,7 +35,7 @@ def test_get_collect_and_notify_incidents_uses_settings(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
-def test_get_collect_and_notify_detections_wires_analyzer(monkeypatch) -> None:
+def test_get_collect_and_notify_detections_sends_without_analysis(monkeypatch) -> None:
     get_settings.cache_clear()
     monkeypatch.setenv("SANITIZER_HMAC_SECRET", "test-secret")
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
@@ -48,7 +45,7 @@ def test_get_collect_and_notify_detections_wires_analyzer(monkeypatch) -> None:
     use_case = get_collect_and_notify_detections()
 
     assert isinstance(use_case, CollectAndNotifyDetections)
-    assert use_case._analyzer is not None  # noqa: SLF001
+    assert use_case._analyzer is None  # noqa: SLF001
     get_settings.cache_clear()
 
 
@@ -73,45 +70,20 @@ def test_get_analyze_incident_uses_settings(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
-def test_default_ollama_provider_wires_public_factories(monkeypatch) -> None:
+def test_public_factories_send_without_llm_analysis(monkeypatch) -> None:
     get_settings.cache_clear()
     monkeypatch.setenv("SANITIZER_HMAC_SECRET", "test-secret")
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
     monkeypatch.setenv("ESET_ACCESS_TOKEN", "token-value")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/db")
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_MODEL", "qwen-test")
-
-    analyze = get_analyze_incident()
-    incident_collection = get_collect_and_notify_incidents()
-    detection_collection = get_collect_and_notify_detections()
-
-    assert isinstance(analyze._llm_gateway, OllamaGateway)  # noqa: SLF001
-    assert isinstance(incident_collection._analyzer._llm_gateway, OllamaGateway)  # noqa: SLF001
-    assert isinstance(detection_collection._analyzer._llm_gateway, OllamaGateway)  # noqa: SLF001
-    get_settings.cache_clear()
-
-
-def test_cleared_ollama_model_wires_local_gateway_in_public_factories(monkeypatch) -> None:
-    get_settings.cache_clear()
-    monkeypatch.setenv("SANITIZER_HMAC_SECRET", "test-secret")
-    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
-    monkeypatch.setenv("ESET_ACCESS_TOKEN", "token-value")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/db")
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_MODEL", "")
 
     analyze = get_analyze_incident()
     incident_collection = get_collect_and_notify_incidents()
     detection_collection = get_collect_and_notify_detections()
 
     assert isinstance(analyze._llm_gateway, LocalAnalysisGateway)  # noqa: SLF001
-    assert isinstance(  # noqa: SLF001
-        incident_collection._analyzer._llm_gateway, LocalAnalysisGateway
-    )
-    assert isinstance(  # noqa: SLF001
-        detection_collection._analyzer._llm_gateway, LocalAnalysisGateway
-    )
+    assert incident_collection._analyzer is None  # noqa: SLF001
+    assert detection_collection._analyzer is None  # noqa: SLF001
     get_settings.cache_clear()
 
 

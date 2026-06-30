@@ -28,13 +28,15 @@ Implemented capabilities:
 - RAG evidence based analysis API.
 - Automatic Low and Medium Discord notifications now include RAG analysis summary,
   confidence, evidence coverage, evidence IDs, and immediate action.
-- `OllamaGateway` as the real local LLM analysis backend: calls the in-network Ollama
-  `/api/generate` endpoint with JSON constrained output, retries connection/timeout errors,
-  retries once on schema validation failure, rejects fabricated evidence IDs, appends
-  prompt-injection detections to `limitations`, and uses sanitized title/summary in the prompt.
-- `_get_llm_gateway()` provider-selection factory: selects `OllamaGateway` when
-  `LLM_PROVIDER=ollama` and `OLLAMA_MODEL` is set; falls back to `LocalAnalysisGateway` when the
-  model is explicitly cleared or another provider is configured.
+- `OllamaGateway`/qwen2.5 removed (project-owner decision, 2026-06-30): the auto-notify
+  pipelines (`CollectAndNotifyIncidents`/`CollectAndNotifyDetections`) no longer run any LLM
+  analysis step — ESET incident/detection data is sent straight to Discord. The manual
+  `/api/v1/analyses/run` endpoint still works, now backed only by the deterministic
+  `LocalAnalysisGateway` (no external model call). The `ollama` Docker Compose service,
+  `OLLAMA_*`/`LLM_PROVIDER`/`LLM_MODEL`/`LLM_TIMEOUT_SECONDS`/`LLM_MAX_RETRIES` settings, and
+  `structured_output.py` were deleted along with it.
+- `MIN_NOTIFY_SEVERITY` (default `medium`, 2026-06-30): incidents/detections below this severity
+  are skipped entirely — no analysis, no Discord notification, no DB idempotency record.
 - IP address pseudonymization removed from the shared sanitizer by explicit project-owner
   decision. Raw private and public IPs now flow to the Discord notification builder and the LLM
   gateway prompt.
@@ -52,17 +54,9 @@ Verified manually:
 - Collection run history is written and readable.
 - Knowledge ingest indexes runbook documents.
 - Knowledge search returns indexed evidence chunks.
-- Analysis API returns root cause, remediation, confidence, evidence coverage, and evidence IDs.
+- Analysis API returns root cause, remediation, confidence, evidence coverage, and evidence IDs
+  (via `LocalAnalysisGateway`; no external model call as of 2026-06-30).
 - RAG evidence is attached to analysis after knowledge ingest.
-- Previous hosted-provider live verification has been superseded by the local Ollama gateway.
-  Before production use after first compose startup, pull the pinned model once:
-
-```bash
-sudo docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M
-```
-
-After the model is pulled, manually verify `POST /api/v1/analyses/run` through the compose network
-using `OLLAMA_BASE_URL=http://ollama:11434` and confirm the response is schema-valid.
 
 Three bugs were found and fixed only by this live verification (spec review alone did not
 surface them):
@@ -83,8 +77,7 @@ surface them):
 Start or refresh containers:
 
 ```bash
-sudo docker compose up -d --build --force-recreate api worker scheduler redis postgres ollama
-sudo docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M
+sudo docker compose up -d --build --force-recreate api worker scheduler redis postgres
 ```
 
 Health and readiness:

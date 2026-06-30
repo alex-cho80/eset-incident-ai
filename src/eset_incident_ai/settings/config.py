@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     detection_max_pages_per_run: int = 1000
     detection_backfill_window_days: int = 30
     detection_notify_cron_interval_minutes: int = 60
+    min_notify_severity: str = "medium"
 
     database_url: str = "postgresql+psycopg://incident_ai:password@postgres:5432/incident_ai"
     redis_url: str = "redis://redis:6379/0"
@@ -37,13 +38,6 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
     discord_enabled: bool = False
 
-    llm_provider: str = "ollama"
-    llm_model: str = ""
-    ollama_base_url: str = "http://ollama:11434"
-    ollama_model: str = "qwen2.5:7b-instruct-q4_K_M"
-    ollama_keep_alive: str = "0s"
-    llm_timeout_seconds: float = 240.0
-    llm_max_retries: int = 2
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
 

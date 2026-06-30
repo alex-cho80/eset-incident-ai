@@ -18,3 +18,18 @@ class Severity(StrEnum):
         if text in {severity.value for severity in cls}:
             return cls(text)
         return cls.LOW
+
+    @property
+    def rank(self) -> int:
+        return _SEVERITY_RANK[self]
+
+    def meets_threshold(self, minimum: Severity) -> bool:
+        return self.rank >= minimum.rank
+
+
+_SEVERITY_RANK: dict[Severity, int] = {
+    Severity.LOW: 0,
+    Severity.MEDIUM: 1,
+    Severity.HIGH: 2,
+    Severity.CRITICAL: 3,
+}
